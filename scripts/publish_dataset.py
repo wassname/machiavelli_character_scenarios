@@ -8,11 +8,18 @@ from pathlib import Path
 
 from huggingface_hub import CommitOperationAdd, HfApi
 
-from dataset_io import PROVENANCE, ROOT
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parent / "data"))
+
+from dataset_io import SOURCES, ROOT
 from prepare_inputs import INPUT_REVISION
 
 REPO = "wassname/machiavelli_character_scenarios"
 CODE = "https://github.com/wassname/machiavelli_character_scenarios"
+
+
+def dataset_card() -> str:
+    return "---\n" + (ROOT / "dataset_metadata.yaml").read_text().strip() + "\n---\n\n" + (ROOT / "README.md").read_text()
 
 
 def main() -> None:
@@ -23,7 +30,7 @@ def main() -> None:
     parser.add_argument("--negative-checks", type=Path, required=True)
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--publish", action="store_true")
-    parser.add_argument("--expected-parent", default=PROVENANCE["published_dataset"]["revision"])
+    parser.add_argument("--expected-parent", default=SOURCES["original_prompts"]["revision"])
     args = parser.parse_args()
     verified = json.loads((args.run / "verification.json").read_text())
     prepared = json.loads((args.prepared / "summary.json").read_text())
@@ -46,7 +53,6 @@ def main() -> None:
     assert verified["project_total_usd_at_verification"] <= 40
     args.out.mkdir(parents=True, exist_ok=False)
     files = {
-        "README.md": ROOT / "DATASET_CARD.md",
         "CITATION.cff": ROOT / "CITATION.cff",
         "parquet/train.parquet": args.run / "parquet/train.parquet",
         "checks/verification.json": args.run / "verification.json",
@@ -61,7 +67,10 @@ def main() -> None:
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(source, target)
         hashes[relative] = hashlib.sha256(target.read_bytes()).hexdigest()
-    release = {"version": "1.0.0", "dataset": REPO, "code": CODE, "input_revision": INPUT_REVISION, "rubric_version": metadata["config"]["rubric_version"], "model": metadata["config"]["model"], "scenarios": verified["scenarios"], "choices": verified["complete_actions"], "changed_prompt_rows": prepared["changed_prompt_rows"], "restored_choices": prepared["restored_choices"], "input_sha256": prepared["inputs_sha256"], "files_sha256": hashes, "code_files_sha256": {str(path.relative_to(ROOT)): hashlib.sha256(path.read_bytes()).hexdigest() for path in sorted((ROOT / "scripts/data").glob("*.py"))}, "validation": "Artifact integrity and source/receipt checks, not semantic accuracy or calibration.", "project_inference_usd": verified["project_total_usd_at_verification"], "local_generation_commit": metadata["commit"]}
+    card = args.out / "README.md"
+    card.write_text(dataset_card())
+    hashes["README.md"] = hashlib.sha256(card.read_bytes()).hexdigest()
+    release = {"version": "1.0.0", "dataset": REPO, "code": CODE, "input_revision": INPUT_REVISION, "rubric_version": metadata["config"]["rubric_version"], "model": metadata["config"]["model"], "scenarios": verified["scenarios"], "choices": verified["complete_actions"], "changed_prompt_rows": prepared["changed_prompt_rows"], "restored_choices": prepared["restored_choices"], "input_sha256": prepared["inputs_sha256"], "files_sha256": hashes, "code_files_sha256": {str(path.relative_to(ROOT)): hashlib.sha256(path.read_bytes()).hexdigest() for path in sorted((ROOT / "scripts").rglob("*.py"))}, "validation": "Artifact integrity and source/receipt checks, not semantic accuracy or calibration.", "project_inference_usd": verified["project_total_usd_at_verification"], "local_generation_commit": metadata["commit"]}
     (args.out / "release.json").write_text(json.dumps(release, indent=2) + "\n")
     print(json.dumps(release, indent=2))
     if args.publish:

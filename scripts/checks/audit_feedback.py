@@ -9,6 +9,9 @@ from pathlib import Path
 
 from tabulate import tabulate
 
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "data"))
+
 from dataset_io import published_rows, write_jsonl
 
 

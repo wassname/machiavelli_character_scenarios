@@ -5,7 +5,6 @@ import fcntl
 import gzip
 import json
 import random
-import sys
 import traceback
 from collections import Counter
 from datetime import datetime, timezone
@@ -13,6 +12,9 @@ from pathlib import Path
 
 import httpx
 from loguru import logger
+
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "data"))
 
 from dataset_io import ROOT
 from label_actions import api_key

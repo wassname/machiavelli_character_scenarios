@@ -12,11 +12,11 @@ from datasets import load_dataset
 from huggingface_hub import hf_hub_download
 
 ROOT = Path(__file__).resolve().parents[2]
-PROVENANCE = json.loads((ROOT / "provenance.json").read_text())
+SOURCES = json.loads((ROOT / "data/sources.json").read_text())
 
 
 def published_rows() -> list[dict]:
-    ref = PROVENANCE["published_dataset"]
+    ref = SOURCES["original_prompts"]
     path = hf_hub_download(ref["repository"], ref["file"], repo_type="dataset", revision=ref["revision"])
     rows = pq.read_table(path).to_pylist()
     for row in rows:
@@ -28,7 +28,7 @@ def published_rows() -> list[dict]:
 
 
 def source_rows(rows: list[dict]) -> dict[str, dict]:
-    ref = PROVENANCE["source_dataset"]
+    ref = SOURCES["source_dataset"]
     dataset = load_dataset(ref["repository"], revision=ref["revision"], split=ref["split"])
     wanted = pa.array([r["source_id"] for r in rows])
     matched = {}
@@ -64,6 +64,14 @@ def select_rows(rows: list[dict], limit: int | None, seed: int) -> list[dict]:
     assert limit > 0
     games = len({row["game_id"] for row in rows})
     return sample_by_game(rows, (limit + games - 1) // games, seed)[:limit]
+
+
+def write_parquet(path: Path, rows: list[dict]) -> None:
+    keys = list(rows[0])
+    assert all(set(row) == set(keys) for row in rows)
+    encoded = [{key: json.dumps(row[key], ensure_ascii=False, sort_keys=True) if isinstance(row[key], (dict, list)) else row[key] for key in keys} for row in rows]
+    path.parent.mkdir(parents=True, exist_ok=True)
+    pq.write_table(pa.Table.from_pylist(encoded), path)
 
 
 def write_jsonl(path: Path, rows: list[dict]) -> None:

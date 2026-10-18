@@ -6,7 +6,7 @@ import json
 import re
 from pathlib import Path
 
-from dataset_io import PROVENANCE, published_rows, source_rows, write_jsonl
+from dataset_io import SOURCES, published_rows, source_rows, write_jsonl
 
 INPUT_REVISION = "rendered-choices-v3"
 MARKUP = re.compile(r"\[/?(?:b|i|u|s|strong|em)\]", re.I)
@@ -71,9 +71,13 @@ def verify_inputs(rows: list[dict], originals: list[dict], sources: dict[str, di
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--out", type=Path, required=True)
+    parser.add_argument("--limit", type=int)
     args = parser.parse_args()
     args.out.mkdir(parents=True, exist_ok=False)
     originals = published_rows()
+    if args.limit is not None:
+        assert args.limit > 0
+        originals = originals[:args.limit]
     sources = source_rows(originals)
     rows = [repair(row, sources[row["source_id"]]) for row in originals]
     verify_inputs(rows, originals, sources)
@@ -81,7 +85,7 @@ def main() -> None:
     write_jsonl(path, rows)
     modified = [row for row in rows if row["text"] != row["original_prompt"]["text"]]
     added = [(row["source_id"], key) for row in rows for key in row["choice_text"] if not row["original_prompt"]["choice_text"].get(key)]
-    summary = {"input_revision": INPUT_REVISION, "scenarios": len(rows), "actions": sum(len(row["choice_text"]) for row in rows), "changed_prompt_rows": len(modified), "changed_choice_texts": sum(len(row["input_repairs"]) for row in rows), "restored_choices": len(added), "restored_ids_beyond_nine": sum(int(key) >= 10 for _, key in added), "source_placeholder_rows": sum("source_user_input_placeholder" in row["input_issues"] for row in rows), "interface_context_repaired_rows": sum(row["input_context_repaired"] for row in rows), "original_annotations_unchanged": True, "all_other_summaries_unchanged": True, "only_current_observation_choices_used": True, "api_calls": 0, "inputs_sha256": hashlib.sha256(path.read_bytes()).hexdigest(), "provenance": PROVENANCE}
+    summary = {"input_revision": INPUT_REVISION, "scenarios": len(rows), "actions": sum(len(row["choice_text"]) for row in rows), "changed_prompt_rows": len(modified), "changed_choice_texts": sum(len(row["input_repairs"]) for row in rows), "restored_choices": len(added), "restored_ids_beyond_nine": sum(int(key) >= 10 for _, key in added), "source_placeholder_rows": sum("source_user_input_placeholder" in row["input_issues"] for row in rows), "interface_context_repaired_rows": sum(row["input_context_repaired"] for row in rows), "original_annotations_unchanged": True, "all_other_summaries_unchanged": True, "only_current_observation_choices_used": True, "api_calls": 0, "inputs_sha256": hashlib.sha256(path.read_bytes()).hexdigest(), "sources": SOURCES}
     (args.out / "summary.json").write_text(json.dumps(summary, indent=2) + "\n")
     print(json.dumps(summary, indent=2))
 

@@ -5,7 +5,6 @@ import gzip
 import hashlib
 import json
 import math
-import sys
 import traceback
 from collections import Counter
 from pathlib import Path
@@ -14,6 +13,9 @@ import pyarrow.parquet as pq
 from loguru import logger
 from tabulate import tabulate
 
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "data"))
+
 from dataset_io import ROOT, input_rows, published_rows, select_rows, source_rows
 from prepare_inputs import verify_inputs
 from judge_questions import RUBRIC, TASK, identity, interpret, request
@@ -21,7 +23,7 @@ from label_actions import validate
 
 
 def verify_request(payload: dict, parent: dict, choice: str, config: dict) -> None:
-    expected = request(parent, choice, Path(config["rubrics"]), virtues=not config["no_virtues"])
+    expected = request(parent, choice, virtues=not config["no_virtues"])
     assert payload == expected, "Saved request differs from the complete configured questions or visible state"
 
 

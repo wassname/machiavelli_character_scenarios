@@ -7,7 +7,7 @@ carries moral ambiguity; power/violence labels are only a penalty when they
 explain the contrast by themselves.
 
 Run:
-    uv run python scripts/scenario_sources/score_machiavelli_moral_contrast.py
+    uv run python scripts/generation/score_machiavelli_moral_contrast.py
 
 Out:
     out/machiavelli_moral_contrast/scored.jsonl

@@ -7,8 +7,8 @@ stay structured so downstream prompts/questions can be changed without
 re-running the summariser.
 
 Usage:
-  uv run python scripts/data/summarise_machiavelli.py --n 10
-  uv run python scripts/data/summarise_machiavelli.py --all
+  uv run python scripts/generation/summarise_machiavelli.py --n 10
+  uv run python scripts/generation/summarise_machiavelli.py --all
 Cache: data/interim/machiavelli_summaries.jsonl
 """
 from __future__ import annotations
@@ -27,8 +27,6 @@ from typing import Any
 from datasets import load_dataset
 from dotenv import load_dotenv
 from openai import AsyncOpenAI
-import pyarrow as pa
-import pyarrow.parquet as pq
 from tabulate import tabulate
 
 HERE = Path(__file__).resolve().parent
@@ -36,11 +34,12 @@ if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
 from score_machiavelli_moral_contrast import score_row
+sys.path.insert(0, str(HERE.parent / "data"))
 from prepare_inputs import rendered_choices
+from dataset_io import SOURCES
 
 ROOT = HERE.parents[1]
 load_dotenv(ROOT / ".env")
-PROVENANCE = json.loads((ROOT / "provenance.json").read_text())
 CACHE = ROOT / "data" / "interim" / "machiavelli_summaries.jsonl"
 MODEL = "deepseek/deepseek-v4-flash"
 RESPONSE_LOG = ROOT / "outputs" / "generation" / "responses.jsonl"
@@ -526,7 +525,7 @@ def _write_cache(rows: dict[str, dict[str, Any]]) -> None:
 
 
 def _usable_rows(pool_size: int | None) -> list[dict[str, Any]]:
-    ds = load_dataset("wassname/machiavelli", revision=PROVENANCE["source_dataset"]["revision"], split="train", streaming=True)
+    ds = load_dataset("wassname/machiavelli", revision=SOURCES["source_dataset"]["revision"], split="train", streaming=True)
     rows = []
     for seen, row in enumerate(ds, start=1):
         if len(_axes(row["choice_labels"])) < 2:
@@ -567,7 +566,7 @@ def _moral_contrast_top_percent_rows(
 ) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]]]:
     if not (0.0 < top_game_frac <= 1.0):
         raise ValueError(f"top_game_frac must be in (0, 1], got {top_game_frac}")
-    ds = load_dataset("wassname/machiavelli", revision=PROVENANCE["source_dataset"]["revision"], split="train")
+    ds = load_dataset("wassname/machiavelli", revision=SOURCES["source_dataset"]["revision"], split="train")
     by_game: dict[str, list[tuple[float, str, dict[str, Any], dict[str, Any]]]] = {}
     seen_pairs = set()
     for row in ds:
@@ -698,23 +697,6 @@ async def _summarise_batch(
                 return row, e
 
     return await asyncio.gather(*(one(row) for row in rows))
-
-
-def _jsonable(value: Any) -> Any:
-    if isinstance(value, (dict, list)):
-        return json.dumps(value, ensure_ascii=False, sort_keys=True)
-    return value
-
-
-def _write_parquet(path: Path, rows: list[dict[str, Any]]) -> None:
-    keys = list(rows[0])
-    for row in rows[1:]:
-        for key in row:
-            if key not in keys:
-                keys.append(key)
-    table = pa.Table.from_pylist([{k: _jsonable(row.get(k)) for k in keys} for row in rows])
-    path.parent.mkdir(parents=True, exist_ok=True)
-    pq.write_table(table, path)
 
 
 async def main() -> None:

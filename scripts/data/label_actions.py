@@ -23,7 +23,7 @@ from dotenv import load_dotenv
 from loguru import logger
 from tabulate import tabulate
 
-from dataset_io import PROVENANCE, ROOT, input_rows, select_rows, write_jsonl
+from dataset_io import SOURCES, ROOT, input_rows, select_rows, write_jsonl, write_parquet
 from judge_questions import MODEL, RUBRIC, identity, interpret, request
 
 RESERVATION_USD = 0.10
@@ -83,7 +83,7 @@ async def label(args: argparse.Namespace, rows: list[dict], run_log: Path) -> No
             async with semaphore, request_locks.setdefault((row["text"], row["choice_text"][choice]), asyncio.Lock()):
                 if stopping:
                     return
-                payload = request(row, choice, args.rubrics, virtues=not args.no_virtues)
+                payload = request(row, choice, virtues=not args.no_virtues)
                 request_key = identity(payload)
                 path = cache / (request_key + ".json.gz")
                 if path.exists():
@@ -158,9 +158,8 @@ async def label(args: argparse.Namespace, rows: list[dict], run_log: Path) -> No
         grouped.setdefault(row["source_id"], {})[row["choice_id"]] = row
     enriched = [{**row, "choice_labels_visible": grouped[row["source_id"]]} for row in rows]
     write_jsonl(args.out / "enriched.jsonl", enriched)
-    from summarise_machiavelli import _write_parquet
     parquet = args.out / "parquet" / "train.parquet"
-    _write_parquet(parquet, enriched)
+    write_parquet(parquet, enriched)
     exported = pq.read_table(parquet, columns=["source_id", "text", "choice_labels"]).to_pylist()
     assert [row["source_id"] for row in exported] == [row["source_id"] for row in rows]
     assert [row["text"] for row in exported] == [row["text"] for row in rows]
@@ -180,7 +179,6 @@ def main() -> None:
     parser.add_argument("--budget-usd", type=float, default=40, help="Cumulative project inference cap, including all earlier paid pilots")
     parser.add_argument("--key-source", choices=["env", "pi"], default="env")
     parser.add_argument("--concurrency", type=int, default=8)
-    parser.add_argument("--rubrics", type=Path, default=Path("data/raw/virtue_rubrics"))
     parser.add_argument("--no-virtues", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--out", type=Path, default=Path("outputs") / (datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ") + "_labels"))
@@ -192,16 +190,16 @@ def main() -> None:
     logger.add(sys.stdout, level="INFO", format="{message}\n", colorize=False)
     logger.add(run_log, level="DEBUG", format="{message}\n", colorize=False)
     started = time.monotonic()
-    config = vars(args) | {"out": str(args.out), "rubrics": str(args.rubrics), "inputs": str(args.inputs) if args.inputs else None, "inputs_sha256": hashlib.sha256(args.inputs.read_bytes()).hexdigest() if args.inputs else None, "model": MODEL, "rubric_version": RUBRIC["version"]}
+    config = vars(args) | {"out": str(args.out), "inputs": str(args.inputs) if args.inputs else None, "inputs_sha256": hashlib.sha256(args.inputs.read_bytes()).hexdigest() if args.inputs else None, "model": MODEL, "rubric_version": RUBRIC["version"]}
     logger.info("# Visible-action relabelling\n\nCommand:\n\n```text\n" + shlex.join(sys.argv) + "\n```\n\n## Resolved config\n\n```json\n" + json.dumps(config, indent=2) + "\n```")
-    metadata = {"config": config, "provenance": PROVENANCE, "commit": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(), "dirty": bool(subprocess.check_output(["git", "status", "--porcelain", "--untracked-files=no"], text=True))}
+    metadata = {"config": config, "sources": SOURCES, "commit": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(), "dirty": bool(subprocess.check_output(["git", "status", "--porcelain", "--untracked-files=no"], text=True))}
     (args.out / "metadata.json").write_text(json.dumps(metadata, indent=2) + "\n")
     try:
         rows = select_rows(input_rows(args.inputs), args.limit, args.seed)
         actions = sum(sum(bool(text) for text in row["choice_text"].values()) for row in rows)
         logger.info(f"## Labels -> input\n\n{len(rows)} scenarios; {actions} available actions. Only the exact supplied text and selected choice enter the judge's state. No source histories, original annotations, rewards or future outcomes are passed.")
         if args.dry_run:
-            payload = request(rows[0], next(key for key, text in rows[0]["choice_text"].items() if text), args.rubrics, virtues=not args.no_virtues)
+            payload = request(rows[0], next(key for key, text in rows[0]["choice_text"].items() if text), virtues=not args.no_virtues)
             (args.out / "example_request.json").write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
             logger.info(f"## Result\n\nDry run: {len(payload['questions'])} questions per action, {actions} actions. No API calls. Example exact request: `{args.out / 'example_request.json'}`.\n\n{run_log}")
             return

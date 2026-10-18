@@ -1,0 +1,19 @@
+license: mit
+language:
+- en
+task_categories:
+- text-generation
+- text-classification
+pretty_name: MACHIAVELLI character scenarios
+tags:
+- moral-dilemmas
+- roleplay
+- ai-safety
+- synthetic
+size_categories:
+- 10K<n<100K
+configs:
+- config_name: default
+  data_files:
+  - split: train
+    path: parquet/train.parquet

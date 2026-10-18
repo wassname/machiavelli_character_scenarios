@@ -1,0 +1,13 @@
+{
+  "source_dataset": {
+    "repository": "wassname/machiavelli",
+    "revision": "ad94523164709710441833fb25c19ea108f69e60",
+    "split": "train"
+  },
+  "original_prompts": {
+    "repository": "wassname/machiavelli_character_scenarios",
+    "revision": "abd8b004486440919dc9850ef7c34098e79ccbce",
+    "file": "parquet/train.parquet",
+    "rows": 10492
+  }
+}
