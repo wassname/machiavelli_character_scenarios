@@ -1,0 +1,22 @@
+[project]
+name = "machiavelli-character-scenarios"
+version = "0.1.0"
+description = "Reproducible MACHIAVELLI scene summaries and source-grounded quality checks."
+requires-python = ">=3.11"
+readme = "README.md"
+license = "MIT"
+dependencies = [
+    "datasets>=5.0.0",
+    "huggingface-hub>=0.36,<1",
+    "httpx>=0.28",
+    "loguru>=0.7",
+    "openai>=2.45.0",
+    "pyarrow>=24.0.0",
+    "python-dotenv>=1.0",
+    "tabulate>=0.9",
+    "beartype>=0.22",
+]
+
+[tool.uv]
+package = false
+exclude-newer = "8 days"

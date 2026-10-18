@@ -1,0 +1,42 @@
+# PI/OpenAI: citation metadata for the derived dataset.
+cff-version: 1.2.0
+message: "Please cite this dataset and the original MACHIAVELLI paper listed below."
+type: dataset
+title: "MACHIAVELLI character scenarios"
+authors:
+  - family-names: Clark
+    given-names: Michael J.
+    alias: wassname
+repository-code: "https://github.com/wassname/machiavelli_character_scenarios"
+url: "https://huggingface.co/datasets/wassname/machiavelli_character_scenarios"
+version: "1.0.0"
+date-released: "2026-10-18"
+license: MIT
+abstract: "Short game scenes and choice-level model estimates for studying moral decisions and character in language models, derived from MACHIAVELLI."
+references:
+  - type: conference-paper
+    title: "Do the Rewards Justify the Means? Measuring Trade-Offs Between Rewards and Ethical Behavior in the Machiavelli Benchmark"
+    authors:
+      - family-names: Pan
+        given-names: Alexander
+      - family-names: Chan
+        given-names: Jun Shern
+      - family-names: Zou
+        given-names: Andy
+      - family-names: Li
+        given-names: Nathaniel
+      - family-names: Basart
+        given-names: Steven
+      - family-names: Woodside
+        given-names: Thomas
+      - family-names: Ng
+        given-names: Jonathan
+      - family-names: Zhang
+        given-names: Hanlin
+      - family-names: Emmons
+        given-names: Scott
+      - family-names: Hendrycks
+        given-names: Dan
+    year: 2023
+    collection-title: "Proceedings of the 40th International Conference on Machine Learning"
+    url: "https://arxiv.org/abs/2304.03279"

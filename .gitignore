@@ -1,0 +1,17 @@
+.venv/
+.pi/
+.local/
+.env
+.env.*
+__pycache__/
+*.pyc
+.ruff_cache/
+/data/raw/
+/data/interim/
+/data/processed/
+/outputs/
+# PI/OpenAI: Keep agent working material and private publication records local.
+/slop/
+/AGENTS.md
+/RESEARCH_JOURNAL.md
+/results.md

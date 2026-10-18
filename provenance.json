@@ -1,0 +1,43 @@
+{
+  "imported_from": {
+    "repository": "https://github.com/wassname/persona-steering-template-library",
+    "commit": "94d839629c59729653b98ca64caf841934101eb7",
+    "files": [
+      {
+        "source_path": "scripts/scenario_sources/summarise_machiavelli.py",
+        "local_path": "scripts/data/summarise_machiavelli.py",
+        "sha256_at_import": "b84be87090aff1abcaaf8ef58c006d00fae68afdcb7aa01a75ec719e97af107e"
+      },
+      {
+        "source_path": "scripts/scenario_sources/score_machiavelli_moral_contrast.py",
+        "local_path": "scripts/data/score_machiavelli_moral_contrast.py",
+        "sha256_at_import": "397650adf805e29365135f585a3820899bd82363871f086c71adc365f386c016"
+      }
+    ],
+    "note": "Exact unmodified files imported from the local persona_pstl checkout. This establishes code provenance, not proof of which historical invocation generated the published data."
+  },
+  "source_dataset": {
+    "repository": "wassname/machiavelli",
+    "revision": "ad94523164709710441833fb25c19ea108f69e60",
+    "split": "train"
+  },
+  "published_dataset": {
+    "repository": "wassname/machiavelli_character_scenarios",
+    "revision": "abd8b004486440919dc9850ef7c34098e79ccbce",
+    "file": "parquet/train.parquet",
+    "rows": 10492
+  },
+  "original_benchmark": "https://github.com/aypan17/machiavelli",
+  "label_rubrics": {
+    "behavioural_dimensions": "rubrics/actions.json",
+    "stoic_source_repository": "https://github.com/wassname/tiny-virtues-dev",
+    "stoic_source_revision": "f1e8a66ae9fcc89baf2202f1547c0a696fdc7757",
+    "stoic_source_path": "docs/virtues/lists/stoic.json",
+    "stoic_source_sha256": "473573e773cd54e2eb6cb82ba437935fd8e6ebd2cdb80eaf57e4e9b00a47398d",
+    "stoic_lists_used": ["four_virtues_vices"],
+    "private_reference": true,
+    "dnd_source": "https://www.dndbeyond.com/sources/dnd/free-rules/creating-a-character#Alignment",
+    "dnd_note": "Action-level operational readings, not official character-alignment diagnoses."
+  },
+  "author": "PI/OpenAI"
+}
