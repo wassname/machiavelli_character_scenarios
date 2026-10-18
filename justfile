@@ -7,7 +7,7 @@ default:
 # PI/OpenAI: Unpaid structural/source audit on two real rows; not the API smoke test.
 offline-check:
     HF_HUB_OFFLINE=1 uv run --locked python scripts/data/check_dataset.py --limit 2
-    HF_HUB_OFFLINE=1 uv run --locked python scripts/data/label_actions.py --limit 2 --dry-run
+    HF_HUB_OFFLINE=1 uv run --locked python scripts/data/label_actions.py --limit 2 --dry-run --no-virtues
 
 # PI/OpenAI: Real model, cache and export on two scenarios.
 fast-dev-run *args:
@@ -42,4 +42,4 @@ verify run:
     uv run --locked python scripts/data/verify_labels.py "{{run}}"
 
 results:
-    @cat results.md
+    @cat docs/quality.md
