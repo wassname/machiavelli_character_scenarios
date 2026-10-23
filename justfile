@@ -36,3 +36,15 @@ feedback labels out *args:
 # PI/OpenAI: Generate scene summaries from source histories.
 summarise *args:
     uv run --locked python scripts/generation/summarise_machiavelli.py {{args}}
+
+# PI/Sol: Freeze local tiny-virtues teachings without inference.
+freeze-virtues source:
+    uv run --locked python scripts/data/freeze_virtues.py "{{source}}"
+
+# PI/Sol: Default is unpaid request construction and cost estimation.
+virtues *args:
+    uv run --locked python scripts/data/label_virtues.py {{args}}
+
+# PI/Sol: Check local virtue requests and parsing without inference.
+virtues-check:
+    uv run --locked python scripts/checks/check_virtues.py
