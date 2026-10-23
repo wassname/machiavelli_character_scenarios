@@ -8,6 +8,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "evaluation"))
 from action_choice import MODEL_PATH, ROOT, build_packet, parse_receipt, render, select_scenes
 from score_action_choice import uniform_baseline, cluster_interval
+from eval_api import transient_provider_error
 
 
 def main() -> None:
@@ -46,6 +47,9 @@ def main() -> None:
     invalid = copy.deepcopy(record)
     invalid["response"]["choices"][0]["message"]["content"] = json.dumps({"choice": True, "reasoning": "Text.", "setup_note": ""})
     assert parse_receipt(invalid, config)["status"] == "parse_error"
+    assert transient_provider_error({"error": {"code": 504}})
+    assert not transient_provider_error({"error": {"code": 403}})
+    assert not transient_provider_error({"choices": []})
     values = {"a": [-1., .3], "b": [1., .5], "c": [.6, -.5]}
     baseline = uniform_baseline(values)
     assert all(abs(sum(vector[i] - baseline[i] for vector in values.values())) < 1e-12 for i in range(2))

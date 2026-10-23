@@ -21,6 +21,13 @@ def digest(value: dict) -> str:
     return hashlib.sha256(json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode()).hexdigest()
 
 
+def transient_provider_error(body: dict) -> bool:
+    if "error" not in body:
+        return False
+    code = body["error"]["code"]
+    return code in {408, 429} or 500 <= code < 600
+
+
 async def run_requests(packets: list[dict], out: Path, *, max_new_usd: float, concurrency: int = 8) -> dict:
     ledger = ROOT / ".local/billing.jsonl"
     history = [json.loads(line) for line in ledger.open()]
@@ -50,6 +57,10 @@ async def run_requests(packets: list[dict], out: Path, *, max_new_usd: float, co
                     if cached:
                         record = json.loads(gzip.decompress(path.read_bytes()))
                         assert record["request"] == payload and record["request_key"] == key
+                        if transient_provider_error(record["response"]):
+                            cached = False
+                            counts["cached_infrastructure_errors_retried"] += 1
+                    if cached:
                         counts["cache_hits"] += 1
                     else:
                         assert project_before + new + reserved + RESERVATION <= 58, "Cumulative evaluation cap $58 reached"
@@ -60,6 +71,7 @@ async def run_requests(packets: list[dict], out: Path, *, max_new_usd: float, co
                             for attempt in range(4):
                                 event = {"time": datetime.now(timezone.utc).isoformat(), "request_key": key,
                                          "metadata": packet["metadata"], "attempt": attempt, "request": payload}
+                                counts["http_attempts"] += 1
                                 try:
                                     response = await client.post("https://openrouter.ai/api/v1/chat/completions", json=payload)
                                 except httpx.TransportError as error:
@@ -88,9 +100,13 @@ async def run_requests(packets: list[dict], out: Path, *, max_new_usd: float, co
                                     assert charge <= RESERVATION, "Charge exceeded reservation; stopping before more work"
                                 elif response.status_code == 200 and "error" not in body:
                                     raise ValueError("Successful chat response lacks an actual cost receipt")
+                                provider_timeout = response.status_code == 200 and transient_provider_error(body)
+                                if provider_timeout and attempt < 3:
+                                    await asyncio.sleep(2 ** attempt)
+                                    continue
                                 record = {"request_key": key, "request": payload, "http_status": response.status_code, "response": body}
                                 counts["new_requests"] += 1
-                                if response.status_code == 200:
+                                if response.status_code == 200 and not provider_timeout:
                                     temporary = path.with_suffix(".tmp")
                                     temporary.write_bytes(gzip.compress(json.dumps(record, ensure_ascii=False).encode()))
                                     temporary.replace(path)
