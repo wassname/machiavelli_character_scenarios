@@ -72,3 +72,11 @@ action-eval-check:
 # PI/Sol: Score saved choices against the independently labelled action table.
 action-eval-score run virtues:
     uv run --locked python scripts/evaluation/score_action_choice.py "{{run}}" --virtues "{{virtues}}"
+
+# PI/Sol: Pair original DailyDilemmas actions, retaining hidden fields only as annotations.
+prepare-dailydilemmas out:
+    uv run --locked python scripts/data/prepare_dailydilemmas.py --out "{{out}}"
+
+# PI/Sol: Check exact DD source actions, license and hidden-field blinding without inference.
+dailydilemmas-check inputs:
+    uv run --locked python scripts/checks/check_dailydilemmas.py "{{inputs}}"

@@ -9,5 +9,15 @@
     "revision": "abd8b004486440919dc9850ef7c34098e79ccbce",
     "file": "parquet/train.parquet",
     "rows": 10492
+  },
+  "daily_dilemmas": {
+    "repository": "kellycyy/daily_dilemmas",
+    "revision": "372352c4143ec4923c50b4472bd3148a474f7ab8",
+    "file": "dilemma_to_action_to_values_aggregated.csv",
+    "action_rows": 2720,
+    "scenes": 1360,
+    "license": "cc-by-4.0",
+    "attribution": "DailyDilemmas dataset, kellycyy/daily_dilemmas",
+    "url": "https://huggingface.co/datasets/kellycyy/daily_dilemmas"
   }
 }

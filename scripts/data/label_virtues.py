@@ -23,7 +23,7 @@ from loguru import logger
 
 from virtue_questions import ROOT, RUBRIC_PATH, choices, derive_contrary, identity, load_rubric, parse_answers, request
 
-RESERVATION_USD = .10
+RESERVATION_USD = .01
 TARIFF = .042 / 1_000_000
 
 
@@ -35,7 +35,7 @@ def select_rows(args: argparse.Namespace) -> list[dict]:
         rng = random.Random(args.seed)
         groups = {}
         for row in sorted(rows, key=lambda row: row["source_id"]):
-            groups.setdefault(row["game_id"], []).append(row)
+            groups.setdefault(row[args.group_field], []).append(row)
         for group in groups.values():
             if args.prefer_contrast:
                 group.sort(key=lambda row: (-row["selection_score"], row["source_id"]))
@@ -217,6 +217,7 @@ def main() -> None:
     parser.add_argument("--rubric", type=Path, default=RUBRIC_PATH)
     parser.add_argument("--limit", type=int)
     parser.add_argument("--seed", type=int, default=20261023)
+    parser.add_argument("--group-field", default="game_id", help="Sampling group; use topic_group for DailyDilemmas")
     parser.add_argument("--prefer-contrast", action="store_true", help="Within each game, rank scenes by existing selection_score instead of shuffling")
     parser.add_argument("--include-cases", type=Path)
     parser.add_argument("--item-id", action="append", help="Restrict direct items; repeat for several")
@@ -243,10 +244,14 @@ def main() -> None:
         rows = select_rows(args)
         with (args.out / "selection.jsonl").open("w") as stream:
             for row in rows:
-                stream.write(json.dumps({"source_id": row["source_id"], "game_id": row["game_id"],
+                selection = {"source_id": row["source_id"], "source": row["source"],
+                    "selection_group": row[args.group_field], "group_field": args.group_field,
                     "selection_priority": row["selection_score"] if args.prefer_contrast else None,
-                    "selection_rule": "game-balanced; descending existing selection_score within each game" if args.prefer_contrast else "seeded game-balanced sample",
-                    "choices": len(row["choice_text"])}, ensure_ascii=False) + "\n")
+                    "selection_rule": "balanced groups; descending existing selection_score within each group" if args.prefer_contrast else "seeded balanced groups",
+                    "choices": len(row["choice_text"])}
+                if "game_id" in row:
+                    selection["game_id"] = row["game_id"]
+                stream.write(json.dumps(selection, ensure_ascii=False) + "\n")
         actions = choices(rows)
         items = rubric["items"]
         if args.item_id is not None:

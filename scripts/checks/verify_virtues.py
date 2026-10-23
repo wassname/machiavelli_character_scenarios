@@ -13,7 +13,7 @@ import pyarrow.parquet as pq
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "data"))
 from label_virtues import packets
-from virtue_questions import ROOT, choices, identity, load_rubric, parse_answers
+from virtue_questions import ROOT, choices, identity, load_rubric, parse_answers, visible_identity
 
 
 def verify(run: Path) -> dict:
@@ -69,12 +69,15 @@ def verify(run: Path) -> dict:
     export_check = json.loads((run / "export_verification.json").read_text())
     assert export_check["sha256"] == hashlib.sha256((run / "virtues.parquet").read_bytes()).hexdigest()
     result = {"status": "PASS", "author": "PI/Sol", "scenes": len(rows),
-              "games": len({row["game_id"] for row in rows}), "choices": len(actions),
+              "games": len({row["game_id"] for row in rows if "game_id" in row}),
+              "topic_groups": len({row["topic_group"] for row in rows if "topic_group" in row}),
+              "source_counts": dict(Counter(row["source"] for row in rows)), "choices": len(actions),
               "direct_cells": direct, "derived_cells": derived, "unique_successful_requests": len(costs),
               "subset_cost_usd": str(total), "usage": dict(usage),
               "project_ledger_usd": str(sum((Decimal(str(entry["cost_usd"])) for entry in ledger), Decimal(0))),
               "feedback_by_mode": {key: dict(value) for key, value in feedback.items()},
-              "parquet_sha256": export_check["sha256"],
+              "parquet_sha256": export_check["sha256"], "frozen_rubric_sha256": identity(rubric),
+              "visible_inputs_sha256": visible_identity(rows),
               "evidence": "Every exact request rebuilt from frozen teachings and visible source inputs; every raw scored reply and derived cell matched to parquet; every actual charge matched by response ID and request key.",
               "limits": "Native artifact integrity, not human semantic accuracy or probability calibration. Full-copy none is not validation; summary-only diagnostics omit the story by design."}
     (run / "native_verification.json").write_text(json.dumps(result, indent=2) + "\n")

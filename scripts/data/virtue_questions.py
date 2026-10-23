@@ -31,6 +31,11 @@ def identity(value: dict) -> str:
     return hashlib.sha256(json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode()).hexdigest()
 
 
+def visible_identity(rows: list[dict]) -> str:
+    fields = ("source_id", "player_character", "text", "choice_text")
+    return identity([{key: row[key] for key in fields} for row in sorted(rows, key=lambda row: row["source_id"])])
+
+
 def question_id(source_id: str, choice_id: str) -> str:
     return "s" + hashlib.sha256(json.dumps([source_id, choice_id]).encode()).hexdigest()[:16] + "_level"
 

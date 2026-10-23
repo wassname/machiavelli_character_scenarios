@@ -10,7 +10,7 @@ import pyarrow as pa
 import pyarrow.compute as pc
 import pyarrow.parquet as pq
 
-from virtue_questions import ROOT, identity, load_rubric
+from virtue_questions import ROOT, identity, load_rubric, visible_identity
 
 
 def stage(base: Path, run: Path, native_verification: Path, out: Path) -> dict:
@@ -18,7 +18,7 @@ def stage(base: Path, run: Path, native_verification: Path, out: Path) -> dict:
     native = json.loads(native_verification.read_text())
     assert verified["status"] == native["status"] == "PASS"
     overlay_path = run / "virtues.parquet"
-    assert hashlib.sha256(overlay_path.read_bytes()).hexdigest() == verified["sha256"]
+    assert native["parquet_sha256"] == verified["sha256"] == hashlib.sha256(overlay_path.read_bytes()).hexdigest(), "Native proof belongs to another overlay"
     original = pq.read_table(base)
     assert original.num_rows == 10492
     assert original["source"].unique().to_pylist() == ["machiavelli"]
@@ -27,6 +27,7 @@ def stage(base: Path, run: Path, native_verification: Path, out: Path) -> dict:
     choices_by_source = dict(zip(source_ids, map(json.loads, original["choice_text"].to_pylist()), strict=True))
     priorities, overlay = {}, {}
     rubric = load_rubric()
+    assert native["frozen_rubric_sha256"] == identity(rubric), "Native proof belongs to another frozen rubric"
     direct = {item["item_id"] for item in rubric["items"]}
     parents = {pair["vice_id"]: pair["virtue_id"] for pair in rubric["contraries"]}
     expected = direct | parents.keys()
@@ -47,6 +48,11 @@ def stage(base: Path, run: Path, native_verification: Path, out: Path) -> dict:
         assert labels.keys() == choices_by_source[source_id].keys(), "Partial scene choice coverage"
     assert len(overlay) == verified["scenes"] == native["scenes"] == 2500
     assert sum(map(len, overlay.values())) == verified["choices"] == native["choices"] == 8723
+    visible = []
+    for row in original.select(["source_id", "player_character", "text", "choice_text"]).to_pylist():
+        if row["source_id"] in overlay:
+            visible.append(row | {"choice_text": json.loads(row["choice_text"])})
+    assert visible_identity(visible) == native["visible_inputs_sha256"], "Base prompts differ from the judged inputs"
     assert not {"has_virtue_labels", "choice_virtue_labels", "virtue_selection_priority"} & set(original.column_names)
     merged = original.append_column("has_virtue_labels", pa.array([key in overlay for key in source_ids]))
     merged = merged.append_column("choice_virtue_labels", pa.array([
@@ -84,7 +90,7 @@ def stage(base: Path, run: Path, native_verification: Path, out: Path) -> dict:
               "all_source_ids_and_choices_preserved": True, "all_selected_scene_choices_labelled": True,
               "unlabelled_choice_virtue_labels": {}, "hf_local_parquet_load": "PASS", "card_config_parse": "PASS",
               "rubric_version": rubric["version"], "tiny_virtues_commit": rubric["source"]["commit"],
-              "frozen_teaching_sha256": identity(rubric), "full_teachings_or_native_traces_in_bundle": False,
+              "frozen_rubric_sha256": identity(rubric), "full_teachings_or_native_traces_in_bundle": False,
               "parquet_sha256": hashlib.sha256(parquet.read_bytes()).hexdigest(),
               "validation_scope": "Source and artifact integrity; semantic accuracy and probability calibration are unmeasured."}
     checks = out / "checks"
