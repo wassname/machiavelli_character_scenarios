@@ -137,29 +137,36 @@ async def paid(args: argparse.Namespace, rubric: dict, items: list[dict], action
                     assert initial + spent + reserved + RESERVATION_USD <= args.budget_usd, "Cumulative budget reservation reached"
                     assert spent + reserved + RESERVATION_USD <= args.max_new_usd, "This run's budget reservation reached"
                     reserved += RESERVATION_USD
-                    event = {"time": datetime.now(timezone.utc).isoformat(), "request_key": key, "item_id": item["item_id"],
-                             "choices": [[row["source_id"], row["choice_id"]] for row in batch], "request": payload}
                     try:
-                        try:
-                            response = await client.post("https://openrouter.ai/api/alpha/decisions", json=payload)
-                        except httpx.TransportError as error:
-                            event["error"] = repr(error)
+                        for attempt in range(4):
+                            event = {"time": datetime.now(timezone.utc).isoformat(), "request_key": key,
+                                     "item_id": item["item_id"], "attempt": attempt,
+                                     "choices": [[row["source_id"], row["choice_id"]] for row in batch], "request": payload}
+                            try:
+                                response = await client.post("https://openrouter.ai/api/alpha/decisions", json=payload)
+                            except httpx.TransportError as error:
+                                event["error"] = repr(error)
+                                with (args.out / "requests.jsonl").open("a") as stream:
+                                    stream.write(json.dumps(event, ensure_ascii=False) + "\n")
+                                raise
+                            event |= {"http_status": response.status_code, "response_text": response.text}
                             with (args.out / "requests.jsonl").open("a") as stream:
                                 stream.write(json.dumps(event, ensure_ascii=False) + "\n")
-                            raise
-                        event |= {"http_status": response.status_code, "response_text": response.text}
-                        with (args.out / "requests.jsonl").open("a") as stream:
-                            stream.write(json.dumps(event, ensure_ascii=False) + "\n")
-                        response.raise_for_status()
-                        body = response.json()
-                        charge = body["usage"]["cost"]
-                        assert type(charge) in (float, int) and math.isfinite(charge) and charge >= 0
-                        spent += charge
-                        with ledger.open("a") as stream:
-                            stream.write(json.dumps({"time": event["time"], "request_key": key, "response_id": body["id"],
-                                                     "cost_usd": charge, "model": body["model"], "run": str(args.out)}) + "\n")
-                        assert charge <= RESERVATION_USD, "Actual charge exceeded request reservation; stop before another request"
-                        count += 1
+                            if (response.status_code in {408, 429} or 500 <= response.status_code < 600) and attempt < 3:
+                                logger.warning(f"Transient HTTP {response.status_code}; retry {attempt + 1}/3 for unchanged request {key}.")
+                                await asyncio.sleep(2 ** attempt)
+                                continue
+                            response.raise_for_status()
+                            body = response.json()
+                            charge = body["usage"]["cost"]
+                            assert type(charge) in (float, int) and math.isfinite(charge) and charge >= 0
+                            spent += charge
+                            with ledger.open("a") as stream:
+                                stream.write(json.dumps({"time": event["time"], "request_key": key, "response_id": body["id"],
+                                                         "cost_usd": charge, "model": body["model"], "run": str(args.out)}) + "\n")
+                            assert charge <= RESERVATION_USD, "Actual charge exceeded request reservation; stop before another request"
+                            count += 1
+                            break
                     finally:
                         reserved -= RESERVATION_USD
                 assert body["model"] == rubric["served_model"], body["model"]
