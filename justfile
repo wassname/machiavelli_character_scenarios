@@ -49,13 +49,17 @@ virtues *args:
 virtues-check:
     uv run --locked python scripts/checks/check_virtues.py
 
+# PI/Sol: Reconstruct native requests/replies, every parquet score and its ledger charge.
+virtues-verify run:
+    uv run --locked python scripts/checks/verify_virtues.py "{{run}}"
+
 # PI/Sol: Export a complete 80-item choice-level overlay without inference.
 virtues-export run:
     uv run --locked python scripts/data/export_virtues.py "{{run}}"
 
 # PI/Sol: Stage and locally load-check the full scene table; never upload.
-stage-virtues run verification out:
-    HF_HUB_OFFLINE=1 uv run --locked python scripts/data/stage_virtue_release.py --run "{{run}}" --native-verification "{{verification}}" --out "{{out}}"
+stage-virtues run out:
+    HF_HUB_OFFLINE=1 uv run --locked python scripts/data/stage_virtue_release.py --run "{{run}}" --native-verification "{{run}}/native_verification.json" --out "{{out}}"
 
 # PI/Sol: Choose actions with models; default is an unpaid request/cost preflight.
 action-eval *args:
