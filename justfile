@@ -56,3 +56,15 @@ virtues-export run:
 # PI/Sol: Stage and locally load-check the full scene table; never upload.
 stage-virtues run verification out:
     HF_HUB_OFFLINE=1 uv run --locked python scripts/data/stage_virtue_release.py --run "{{run}}" --native-verification "{{verification}}" --out "{{out}}"
+
+# PI/Sol: Choose actions with models; default is an unpaid request/cost preflight.
+action-eval *args:
+    uv run --locked python scripts/evaluation/action_choice.py {{args}}
+
+# PI/Sol: Check prompt blinding, order mapping, parsing and the uniform null.
+action-eval-check:
+    uv run --locked python scripts/checks/check_action_choice.py
+
+# PI/Sol: Score saved choices against the independently labelled action table.
+action-eval-score run virtues:
+    uv run --locked python scripts/evaluation/score_action_choice.py "{{run}}" --virtues "{{virtues}}"

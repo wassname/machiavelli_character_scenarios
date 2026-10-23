@@ -1,0 +1,27 @@
+{
+  "author": "PI/Sol",
+  "scope": "action-choice-eval-v1",
+  "observed_at": "2026-10-23",
+  "comparison_note": "This is an action-choice evaluation of DeepSeek and Gemma, not a reproduction of tiny-virtues' virtue-classification comparison, which used Gemini Flash Lite rather than Gemma.",
+  "temperature": 0,
+  "seed": 20261023,
+  "max_tokens": 1024,
+  "models": {
+    "deepseek/deepseek-v4.1-flash": {
+      "provider": {"only": ["deepinfra/fp8"], "allow_fallbacks": false, "require_parameters": true, "quantizations": ["fp8"]},
+      "provider_name": "DeepInfra",
+      "reasoning": {"enabled": false},
+      "input_usd_per_million": 0.14,
+      "output_usd_per_million": 0.42,
+      "registry_endpoint": "https://openrouter.ai/api/v1/models/deepseek/deepseek-v4.1-flash/endpoints"
+    },
+    "google/gemma-4-31b-it": {
+      "provider": {"only": ["deepinfra/fp8"], "allow_fallbacks": false, "require_parameters": true, "quantizations": ["fp8"]},
+      "provider_name": "DeepInfra",
+      "reasoning": {"enabled": false},
+      "input_usd_per_million": 0.20,
+      "output_usd_per_million": 0.40,
+      "registry_endpoint": "https://openrouter.ai/api/v1/models/google/gemma-4-31b-it/endpoints"
+    }
+  }
+}
