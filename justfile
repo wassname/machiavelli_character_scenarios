@@ -52,3 +52,7 @@ virtues-check:
 # PI/Sol: Export a complete 80-item choice-level overlay without inference.
 virtues-export run:
     uv run --locked python scripts/data/export_virtues.py "{{run}}"
+
+# PI/Sol: Stage and locally load-check the full scene table; never upload.
+stage-virtues run verification out:
+    HF_HUB_OFFLINE=1 uv run --locked python scripts/data/stage_virtue_release.py --run "{{run}}" --native-verification "{{verification}}" --out "{{out}}"
