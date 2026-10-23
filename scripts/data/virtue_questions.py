@@ -123,4 +123,5 @@ def derive_contrary(parent: dict, vice_id: str) -> dict:
     return {"source_id": parent["source_id"], "choice_id": parent["choice_id"], "item_id": vice_id,
             "shows": parent["against"], "against": parent["shows"], "signed": parent["signed"],
             "vice_presence": -parent["signed"], "derived_from": parent["item_id"],
+            "raw_probabilities": parent["raw_probabilities"],
             "evidence_semantics": "Source-named contrary; not an independent judgement. Raw probabilities belong to derived_from."}

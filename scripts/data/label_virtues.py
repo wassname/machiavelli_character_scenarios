@@ -1,6 +1,7 @@
 """Budgeted five-level virtue labels, or an unpaid request/cost preflight. -- PI/Sol"""
 
 import argparse
+import asyncio
 from collections import Counter
 from datetime import datetime, timezone
 import fcntl
@@ -92,12 +93,14 @@ def preflight(args: argparse.Namespace, rubric: dict, items: list[dict], actions
     return estimate
 
 
-def paid(args: argparse.Namespace, rubric: dict, items: list[dict], actions: list[dict]) -> dict:
+async def paid(args: argparse.Namespace, rubric: dict, items: list[dict], actions: list[dict]) -> dict:
     ledger = ROOT / ".local/billing.jsonl"
     initial = sum(row["cost_usd"] for row in map(json.loads, ledger.read_text().splitlines()))
-    spent = 0.0
+    spent = reserved = 0.0
     count = hits = cells = 0
     feedback = Counter()
+    full_feedback = Counter()
+    stopping = False
     contrary = {pair["virtue_id"]: pair["vice_id"] for pair in rubric["contraries"]}
     cache = ROOT / "data/interim/virtues_v2_cache"
     cache.mkdir(parents=True, exist_ok=True)
@@ -110,67 +113,95 @@ def paid(args: argparse.Namespace, rubric: dict, items: list[dict], actions: lis
         key = os.environ["OPENROUTER_API_KEY"]
     headers = {"Authorization": "Bearer " + key,
                "X-OpenRouter-Title": "machiavelli-character-scenarios/virtues-v2"}
-    with httpx.Client(headers=headers, timeout=180) as client, (args.out / "labels.jsonl").open("w") as labels:
-        for item, batch, full, payload in packets(rubric, items, actions, args.batch_size):
-            key = identity(payload)
-            path = cache / (key + ".json.gz")
-            cached = path.exists()
-            if cached:
-                record = json.loads(gzip.decompress(path.read_bytes()))
-                assert record["request"] == payload
-                body = record["response"]
-                hits += 1
-            else:
-                assert initial + spent + RESERVATION_USD <= args.budget_usd, "Cumulative budget reservation reached"
-                assert spent + RESERVATION_USD <= args.max_new_usd, "This run's budget reservation reached"
-                event = {"time": datetime.now(timezone.utc).isoformat(), "request_key": key, "item_id": item["item_id"],
-                         "choices": [[row["source_id"], row["choice_id"]] for row in batch], "request": payload}
-                try:
-                    response = client.post("https://openrouter.ai/api/alpha/decisions", json=payload)
-                except httpx.TransportError as error:
-                    event["error"] = repr(error)
-                    with (args.out / "requests.jsonl").open("a") as stream:
-                        stream.write(json.dumps(event, ensure_ascii=False) + "\n")
-                    raise
-                event |= {"http_status": response.status_code, "response_text": response.text}
-                with (args.out / "requests.jsonl").open("a") as stream:
-                    stream.write(json.dumps(event, ensure_ascii=False) + "\n")
-                response.raise_for_status()
-                body = response.json()
-                charge = body["usage"]["cost"]
-                assert type(charge) in (float, int) and math.isfinite(charge) and charge >= 0
-                spent += charge
-                with ledger.open("a") as stream:
-                    stream.write(json.dumps({"time": event["time"], "request_key": key, "response_id": body["id"],
-                                             "cost_usd": charge, "model": body["model"], "run": str(args.out)}) + "\n")
-                assert charge <= RESERVATION_USD, "Actual charge exceeded request reservation; stop before another request"
-                count += 1
-            assert body["model"] == rubric["served_model"], body["model"]
-            assert body["provider"] == "TypeSafe", body["provider"]
-            scores = parse_answers(body, payload, item, batch)
-            if not cached:
-                record = {"request_key": key, "request": payload, "response": body}
-                temp = path.with_suffix(".tmp")
-                temp.write_bytes(gzip.compress(json.dumps(record, ensure_ascii=False).encode()))
-                temp.replace(path)
-            if cells == 0:
-                (args.out / "example_receipt.json").write_text(json.dumps(record, ensure_ascii=False, indent=2) + "\n")
-                logger.debug("## First complete receipt\n\n```json\n" + json.dumps(record, ensure_ascii=False, indent=2) + "\n```\n")
-            word = body["answers"]["debug_word"]["choice"]
-            feedback[word] += 1
-            for score in scores:
-                result = score | {"request_key": key, "rubric_version": rubric["version"], "served_model": body["model"],
-                                  "cache_hit": cached, "judge_feedback": body["answers"]["debug_word"],
-                                  "feedback_mode": "full" if full else "summary"}
-                labels.write(json.dumps(result, ensure_ascii=False) + "\n")
-                cells += 1
-                if item["item_id"] in contrary:
-                    derived = derive_contrary(score, contrary[item["item_id"]]) | {
-                        "request_key": key, "rubric_version": rubric["version"], "served_model": body["model"]}
-                    labels.write(json.dumps(derived, ensure_ascii=False) + "\n")
-            labels.flush()
+    work = packets(rubric, items, actions, args.batch_size)
+    async with httpx.AsyncClient(headers=headers, timeout=180) as client:
+        with (args.out / "labels.jsonl").open("w") as labels:
+            async def worker():
+                nonlocal spent, reserved, count, hits, cells
+                for item, batch, full, payload in work:
+                    if stopping:
+                        return
+                    await one(item, batch, full, payload)
+
+            async def one(item, batch, full, payload):
+                nonlocal spent, reserved, count, hits, cells
+                key = identity(payload)
+                path = cache / (key + ".json.gz")
+                cached = path.exists()
+                if cached:
+                    record = json.loads(gzip.decompress(path.read_bytes()))
+                    assert record["request"] == payload
+                    body = record["response"]
+                    hits += 1
+                else:
+                    assert initial + spent + reserved + RESERVATION_USD <= args.budget_usd, "Cumulative budget reservation reached"
+                    assert spent + reserved + RESERVATION_USD <= args.max_new_usd, "This run's budget reservation reached"
+                    reserved += RESERVATION_USD
+                    event = {"time": datetime.now(timezone.utc).isoformat(), "request_key": key, "item_id": item["item_id"],
+                             "choices": [[row["source_id"], row["choice_id"]] for row in batch], "request": payload}
+                    try:
+                        try:
+                            response = await client.post("https://openrouter.ai/api/alpha/decisions", json=payload)
+                        except httpx.TransportError as error:
+                            event["error"] = repr(error)
+                            with (args.out / "requests.jsonl").open("a") as stream:
+                                stream.write(json.dumps(event, ensure_ascii=False) + "\n")
+                            raise
+                        event |= {"http_status": response.status_code, "response_text": response.text}
+                        with (args.out / "requests.jsonl").open("a") as stream:
+                            stream.write(json.dumps(event, ensure_ascii=False) + "\n")
+                        response.raise_for_status()
+                        body = response.json()
+                        charge = body["usage"]["cost"]
+                        assert type(charge) in (float, int) and math.isfinite(charge) and charge >= 0
+                        spent += charge
+                        with ledger.open("a") as stream:
+                            stream.write(json.dumps({"time": event["time"], "request_key": key, "response_id": body["id"],
+                                                     "cost_usd": charge, "model": body["model"], "run": str(args.out)}) + "\n")
+                        assert charge <= RESERVATION_USD, "Actual charge exceeded request reservation; stop before another request"
+                        count += 1
+                    finally:
+                        reserved -= RESERVATION_USD
+                assert body["model"] == rubric["served_model"], body["model"]
+                assert body["provider"] == "TypeSafe", body["provider"]
+                scores = parse_answers(body, payload, item, batch)
+                if not cached:
+                    record = {"request_key": key, "request": payload, "response": body}
+                    temp = path.with_suffix(".tmp")
+                    temp.write_bytes(gzip.compress(json.dumps(record, ensure_ascii=False).encode()))
+                    temp.replace(path)
+                if cells == 0:
+                    (args.out / "example_receipt.json").write_text(json.dumps(record, ensure_ascii=False, indent=2) + "\n")
+                    logger.debug("## First complete receipt\n\n```json\n" + json.dumps(record, ensure_ascii=False, indent=2) + "\n```\n")
+                word = body["answers"]["debug_word"]["choice"]
+                feedback[word] += 1
+                if full:
+                    full_feedback[word] += 1
+                for score in scores:
+                    result = score | {"request_key": key, "rubric_version": rubric["version"], "served_model": body["model"],
+                                      "cache_hit": cached, "judge_feedback": body["answers"]["debug_word"],
+                                      "feedback_mode": "full" if full else "summary"}
+                    labels.write(json.dumps(result, ensure_ascii=False) + "\n")
+                    cells += 1
+                    if item["item_id"] in contrary:
+                        derived = derive_contrary(score, contrary[item["item_id"]]) | {
+                            "request_key": key, "rubric_version": rubric["version"], "served_model": body["model"]}
+                        labels.write(json.dumps(derived, ensure_ascii=False) + "\n")
+                labels.flush()
+                if (count + hits) % 250 == 0:
+                    logger.info(f"Completed {count + hits} requests, {cells} direct labels; run cost ${spent:.4f}; project total ${initial + spent:.4f}.")
+
+            tasks = [asyncio.create_task(worker()) for _ in range(args.concurrency)]
+            try:
+                await asyncio.gather(*tasks)
+            except BaseException:
+                stopping = True
+                await asyncio.gather(*tasks, return_exceptions=True)
+                raise
+    assert cells == len(actions) * len(items), "Incomplete direct-label coverage"
     return {"new_requests": count, "cache_hits": hits, "direct_cells": cells, "new_cost_usd": spent,
-            "project_total_usd": initial + spent, "feedback_counts": dict(feedback)}
+            "project_total_usd": initial + spent, "feedback_counts": dict(feedback),
+            "full_copy_feedback_counts": dict(full_feedback)}
 
 
 def main() -> None:
@@ -183,13 +214,14 @@ def main() -> None:
     parser.add_argument("--include-cases", type=Path)
     parser.add_argument("--item-id", action="append", help="Restrict direct items; repeat for several")
     parser.add_argument("--batch-size", type=int, default=40)
+    parser.add_argument("--concurrency", type=int, default=8)
     parser.add_argument("--allow-paid", action="store_true", help="Omit for unpaid preflight")
     parser.add_argument("--key-source", choices=["env", "pi"], default="env")
     parser.add_argument("--budget-usd", type=float, default=70)
     parser.add_argument("--max-new-usd", type=float, default=1)
     parser.add_argument("--out", type=Path, required=True)
     args = parser.parse_args()
-    assert 1 <= args.batch_size <= 40 and 0 < args.budget_usd <= 70 and args.max_new_usd > 0
+    assert 1 <= args.batch_size <= 40 and 0 < args.budget_usd <= 70 and args.max_new_usd > 0 and args.concurrency > 0
     assert args.include_cases is None or args.limit is not None
     args.out.mkdir(parents=True, exist_ok=False)
     run_log = args.out / "run.md"
@@ -225,7 +257,7 @@ def main() -> None:
             (ROOT / ".local").mkdir(exist_ok=True)
             with (ROOT / ".local/labelling.lock").open("w") as lock:
                 fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                result = paid(args, rubric, items, actions)
+                result = asyncio.run(paid(args, rubric, items, actions))
         (args.out / "summary.json").write_text(json.dumps(result, indent=2) + "\n")
         logger.info("## Result\n\n```json\n" + json.dumps(result, indent=2) + f"\n```\n\nElapsed: {time.monotonic() - started:.1f}s.\n\n{run_log}\n")
     except Exception:

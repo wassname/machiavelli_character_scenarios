@@ -48,3 +48,7 @@ virtues *args:
 # PI/Sol: Check local virtue requests and parsing without inference.
 virtues-check:
     uv run --locked python scripts/checks/check_virtues.py
+
+# PI/Sol: Export a complete 80-item choice-level overlay without inference.
+virtues-export run:
+    uv run --locked python scripts/data/export_virtues.py "{{run}}"
