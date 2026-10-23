@@ -22,6 +22,7 @@ from dotenv import load_dotenv
 from loguru import logger
 
 from virtue_questions import ROOT, RUBRIC_PATH, choices, derive_contrary, identity, load_rubric, parse_answers, request
+from billing_reservations import outstanding, unknown_fees, noncash_reviews
 
 RESERVATION_USD = .01
 TARIFF = .042 / 1_000_000
@@ -134,7 +135,7 @@ async def paid(args: argparse.Namespace, rubric: dict, items: list[dict], action
                     body = record["response"]
                     hits += 1
                 else:
-                    assert initial + spent + reserved + RESERVATION_USD <= args.budget_usd, "Cumulative budget reservation reached"
+                    assert initial + spent + reserved + outstanding(ROOT) + RESERVATION_USD <= args.budget_usd, "Cumulative budget reservation reached"
                     assert spent + reserved + RESERVATION_USD <= args.max_new_usd, "This run's budget reservation reached"
                     reserved += RESERVATION_USD
                     try:
@@ -207,7 +208,9 @@ async def paid(args: argparse.Namespace, rubric: dict, items: list[dict], action
                 raise
     assert cells == len(actions) * len(items), "Incomplete direct-label coverage"
     return {"new_requests": count, "cache_hits": hits, "direct_cells": cells, "new_cost_usd": spent,
-            "project_total_usd": initial + spent, "feedback_counts": dict(feedback),
+            "project_total_usd": initial + spent, "unbilled_cost_reserved_usd": unknown_fees(ROOT),
+            "noncash_review_estimate_usd": noncash_reviews(ROOT),
+            "conservative_budget_total_usd": initial + spent + outstanding(ROOT), "feedback_counts": dict(feedback),
             "full_copy_feedback_counts": dict(full_feedback)}
 
 

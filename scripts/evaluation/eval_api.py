@@ -8,11 +8,15 @@ import hashlib
 import json
 import math
 from pathlib import Path
+import sys
 
 import httpx
 from loguru import logger
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "scripts/data"))
+from billing_reservations import outstanding, unknown_fees, noncash_reviews
+
 SCOPE = "action-choice-eval-v1"
 RESERVATION = .01
 
@@ -63,8 +67,8 @@ async def run_requests(packets: list[dict], out: Path, *, max_new_usd: float, co
                     if cached:
                         counts["cache_hits"] += 1
                     else:
-                        assert project_before + new + reserved + RESERVATION <= 58, "Cumulative evaluation cap $58 reached"
-                        assert scope_before + new + reserved + RESERVATION <= 2, "Evaluation scope cap $2 (including pilots/replays) reached"
+                        assert project_before + new + reserved + outstanding(ROOT) + RESERVATION <= 58, "Cumulative evaluation cap $58 reached"
+                        assert scope_before + new + reserved + outstanding(ROOT, SCOPE) + RESERVATION <= 2, "Evaluation scope cap $2 (including pilots/replays) reached"
                         assert new + reserved + RESERVATION <= max_new_usd, "This evaluation run's cap reached"
                         reserved += RESERVATION
                         try:
@@ -129,4 +133,6 @@ async def run_requests(packets: list[dict], out: Path, *, max_new_usd: float, co
                 raise
     assert counts["completed"] == len(packets)
     return dict(counts) | {"new_cost_usd": new, "project_total_usd": project_before + new,
-                           "evaluation_scope_usd": scope_before + new, "scope": SCOPE}
+                           "evaluation_scope_usd": scope_before + new, "unbilled_cost_reserved_usd": unknown_fees(ROOT),
+                           "noncash_review_estimate_usd": noncash_reviews(ROOT),
+                           "conservative_budget_total_usd": project_before + new + outstanding(ROOT), "scope": SCOPE}

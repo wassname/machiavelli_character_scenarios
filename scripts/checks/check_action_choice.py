@@ -4,11 +4,13 @@ import copy
 import json
 from pathlib import Path
 import sys
+import tempfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "evaluation"))
 from action_choice import MODEL_PATH, ROOT, build_packet, parse_receipt, render, select_scenes
 from score_action_choice import uniform_baseline, cluster_interval
 from eval_api import transient_provider_error
+from billing_reservations import outstanding, unknown_fees, noncash_reviews
 
 
 def main() -> None:
@@ -54,6 +56,16 @@ def main() -> None:
     baseline = uniform_baseline(values)
     assert all(abs(sum(vector[i] - baseline[i] for vector in values.values())) < 1e-12 for i in range(2))
     assert cluster_interval({"a": [0., 0.], "b": [0., 0.]}, {"a": "game1", "b": "game2"}, seed=1, replicates=100) == [(0., 0.), (0., 0.)]
+    with tempfile.TemporaryDirectory() as temporary:
+        root = Path(temporary)
+        (root / ".local").mkdir()
+        (root / ".local/billing_reservations.json").write_text(json.dumps([
+            {"response_id": "one", "scope": "eval", "reserved_usd": .01},
+            {"request_key": "gateway", "scope": "virtues", "reserved_usd": .01}]))
+        (root / ".local/review_usage_estimates.json").write_text(json.dumps([
+            {"run_id": "native-review", "reported_cost_usd": {"costUsd": .5}}]))
+        assert abs(unknown_fees(root) - .02) < 1e-12 and noncash_reviews(root) == .5
+        assert abs(outstanding(root) - .52) < 1e-12 and outstanding(root, "eval") == .01
     print("PASS: hidden labels excluded; only action block reordered; reverse IDs map to original choices; no provider fallback; refusals/length/malformed choices separated; uniform-null deltas and zero bootstrap control hold. No API calls. -- PI/Sol")
 
 
