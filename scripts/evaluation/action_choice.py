@@ -38,7 +38,8 @@ def file_sha(path: Path) -> str:
 
 def select_scenes(path: Path, overlay: Path, count: int, seed: int) -> list[dict]:
     columns = ["source_id", "source", "game_id", "player_character", "text", "choice_text", "actions_text", "has_virtue_labels"]
-    candidates = [row for row in pq.read_table(path, columns=columns).to_pylist() if row["has_virtue_labels"]]
+    candidates = [row for row in pq.read_table(path, columns=columns).to_pylist()
+                  if row["has_virtue_labels"] and row["source"] == "machiavelli"]
     assert len(candidates) == 2500 and 0 < count <= len(candidates)
     source_choices = {}
     for row in pq.read_table(overlay, columns=["source_id", "choice_id"]).to_pylist():
