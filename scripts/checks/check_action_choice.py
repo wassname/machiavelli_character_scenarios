@@ -4,6 +4,7 @@ import asyncio
 import base64
 import copy
 import json
+from itertools import product
 import os
 from pathlib import Path
 import sys
@@ -15,7 +16,7 @@ import pyarrow.parquet as pq
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "evaluation"))
 from action_choice import MODEL_PATH, ROOT, build_packet, embedded_overlay, parse_receipt, render, select_scenes, scene_spread, build_scope_packet, repeat_summary
-from score_action_choice import uniform_baseline, cluster_interval, paired_summary, position_baseline
+from score_action_choice import uniform_baseline, cluster_interval, paired_summary, position_baseline, repeated_choice_gap
 import eval_api
 from eval_api import api_key, transient_provider_error
 from billing_reservations import outstanding, unknown_fees, noncash_reviews
@@ -101,6 +102,11 @@ def main() -> None:
     assert repeated["complete_conditions"] == 1 and repeated["same_prompt_pairs"] == 4 and repeated["order_pairs"] == 2
     assert repeated["status_counts"]["transport_error"] == 1
     values = {"a": [-1., .3], "b": [1., .5], "c": [.6, -.5]}
+    assert repeated_choice_gap(["a"] * 3, ["a"] * 3) == [0., 0., 0.]
+    assert repeated_choice_gap(["a"] * 3, ["b"] * 3) == [1., 0., 1.]
+    assert repeated_choice_gap(["a", "b"], ["a", "b"]) == [.5, 1., -.5]
+    null_draws = [list(draw) for draw in product("ab", repeat=3)]
+    assert abs(sum(repeated_choice_gap(a, b)[2] for a in null_draws for b in null_draws)) < 1e-12
     assert position_baseline({"0": [0.], "1": [1.], "2": [0.]}, 0) == [0.]
     assert position_baseline({"0": [0.], "1": [1.], "2": [0.]}, 1) == [1.]
     baseline = uniform_baseline(values)

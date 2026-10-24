@@ -82,6 +82,16 @@ def paired_summary(vectors: dict, scenes: dict, identities: set, weights: dict, 
     return point, intervals
 
 
+def repeated_choice_gap(a: list[str], b: list[str]) -> list[float]:
+    assert len(a) > 1 and len(b) > 1
+    between = sum(x != y for x in a for y in b) / (len(a) * len(b))
+    within_a = sum(x != y for x, y in combinations(a, 2)) / (len(a) * (len(a) - 1) / 2)
+    within_b = sum(x != y for x, y in combinations(b, 2)) / (len(b) * (len(b) - 1) / 2)
+    within = (within_a + within_b) / 2
+    # The unbiased finite-sample estimate can be negative. -- PI/OpenAI
+    return [between, within, between - within]
+
+
 def score(run: Path, virtues: Path, *, replicates: int = 1000, source_audit_path: Path | None = None) -> dict:
     (run / "scoring_source.py").write_bytes(Path(__file__).read_bytes())
     manifest = json.loads((run / "manifest.json").read_text())
