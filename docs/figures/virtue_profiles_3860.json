@@ -1,0 +1,461 @@
+{
+  "author": "PI/OpenAI",
+  "scenes": 3860,
+  "models": {
+    "deepseek/deepseek-v4.1-flash": "DeepSeek",
+    "google/gemma-4-31b-it": "Gemma",
+    "anthropic/claude-haiku-5.5": "Haiku"
+  },
+  "source_counts": {
+    "daily_dilemmas": 1360,
+    "machiavelli": 2500
+  },
+  "source_weights": {
+    "daily_dilemmas": 0.5,
+    "machiavelli": 0.5
+  },
+  "independent_items": 66,
+  "bootstrap_replicates": 2000,
+  "orders": "Original order plus reversal, averaged per scene; no initial shuffle.",
+  "protocol": "Legacy character-role instruction; original pool, before next-state eligibility filtering.",
+  "uncertainty": "95% game/topic-grouped bootstrap within source. Ratio numerator and denominator jointly resampled. Excludes label uncertainty, source validity and role-prompt interpretation.",
+  "input_sha256": {
+    "scenes": "255510b68ad3d18765e6682b492a7b8b77502ba2d6964e1ea28d2b4d0648b2d3",
+    "choices": "eb90e70450ed1bc778005f8535ccf2fccc978944670a0b0371608d3988656710",
+    "virtues": "bfb6746d7b21594d00e18d80ac200f6d9f4196234f6c1719ec2069e5570834ca"
+  },
+  "rows": [
+    {
+      "model": "deepseek/deepseek-v4.1-flash",
+      "name": "DeepSeek",
+      "tradition": "buddhist",
+      "delta_from_uniform": 0.17554413667553215,
+      "delta_ci95": [
+        0.16525464949669633,
+        0.1858649468352923
+      ],
+      "opportunity_capture": 0.6055716738333922,
+      "capture_ci95": [
+        0.5797237409842873,
+        0.6317592538999625
+      ],
+      "available_above_uniform": 0.28988168413542525
+    },
+    {
+      "model": "deepseek/deepseek-v4.1-flash",
+      "name": "DeepSeek",
+      "tradition": "christian",
+      "delta_from_uniform": 0.07615268660305873,
+      "delta_ci95": [
+        0.07079794976161186,
+        0.08123041155619717
+      ],
+      "opportunity_capture": 0.5492157226477072,
+      "capture_ci95": [
+        0.5183306321317912,
+        0.5806135435943067
+      ],
+      "available_above_uniform": 0.13865714957309522
+    },
+    {
+      "model": "deepseek/deepseek-v4.1-flash",
+      "name": "DeepSeek",
+      "tradition": "confucian",
+      "delta_from_uniform": 0.18492074314225354,
+      "delta_ci95": [
+        0.17291787991076735,
+        0.19660910439915213
+      ],
+      "opportunity_capture": 0.5818064745710599,
+      "capture_ci95": [
+        0.5532798007292936,
+        0.6092888018815487
+      ],
+      "available_above_uniform": 0.3178389227768347
+    },
+    {
+      "model": "deepseek/deepseek-v4.1-flash",
+      "name": "DeepSeek",
+      "tradition": "hindu",
+      "delta_from_uniform": 0.10791230549479389,
+      "delta_ci95": [
+        0.10107521624265631,
+        0.11462221591463043
+      ],
+      "opportunity_capture": 0.5836480360345991,
+      "capture_ci95": [
+        0.5572770826138234,
+        0.6098478354908107
+      ],
+      "available_above_uniform": 0.18489277583793112
+    },
+    {
+      "model": "deepseek/deepseek-v4.1-flash",
+      "name": "DeepSeek",
+      "tradition": "islamic",
+      "delta_from_uniform": 0.14077083795836517,
+      "delta_ci95": [
+        0.13135008559605907,
+        0.15049503585240195
+      ],
+      "opportunity_capture": 0.5702860846332697,
+      "capture_ci95": [
+        0.5410353445149926,
+        0.5988345082066437
+      ],
+      "available_above_uniform": 0.24684249142934953
+    },
+    {
+      "model": "deepseek/deepseek-v4.1-flash",
+      "name": "DeepSeek",
+      "tradition": "jewish",
+      "delta_from_uniform": 0.1611779689152653,
+      "delta_ci95": [
+        0.1508130937108497,
+        0.17156255251037153
+      ],
+      "opportunity_capture": 0.5836959498254133,
+      "capture_ci95": [
+        0.5571189172940904,
+        0.6093695758757326
+      ],
+      "available_above_uniform": 0.27613343721756944
+    },
+    {
+      "model": "deepseek/deepseek-v4.1-flash",
+      "name": "DeepSeek",
+      "tradition": "rationalist",
+      "delta_from_uniform": 0.1339392585502944,
+      "delta_ci95": [
+        0.12532222289275344,
+        0.14275178363547197
+      ],
+      "opportunity_capture": 0.6083963824065464,
+      "capture_ci95": [
+        0.584396713121,
+        0.6307874578938716
+      ],
+      "available_above_uniform": 0.22015130665387928
+    },
+    {
+      "model": "deepseek/deepseek-v4.1-flash",
+      "name": "DeepSeek",
+      "tradition": "stoic",
+      "delta_from_uniform": 0.17828472876736554,
+      "delta_ci95": [
+        0.1680697864903618,
+        0.18848491611041301
+      ],
+      "opportunity_capture": 0.6205843273275858,
+      "capture_ci95": [
+        0.5963047505664145,
+        0.6439136994640398
+      ],
+      "available_above_uniform": 0.2872852582905384
+    },
+    {
+      "model": "deepseek/deepseek-v4.1-flash",
+      "name": "DeepSeek",
+      "tradition": "taoist",
+      "delta_from_uniform": 0.11832692551086652,
+      "delta_ci95": [
+        0.10864877037091145,
+        0.12818482848810733
+      ],
+      "opportunity_capture": 0.5013407834994821,
+      "capture_ci95": [
+        0.47013921377530715,
+        0.5313991604570769
+      ],
+      "available_above_uniform": 0.23602094504443755
+    },
+    {
+      "model": "google/gemma-4-31b-it",
+      "name": "Gemma",
+      "tradition": "buddhist",
+      "delta_from_uniform": 0.1626642418894359,
+      "delta_ci95": [
+        0.15111382943400975,
+        0.17410228996807828
+      ],
+      "opportunity_capture": 0.561140116094549,
+      "capture_ci95": [
+        0.5295208725589604,
+        0.5914901087640203
+      ],
+      "available_above_uniform": 0.28988168413542525
+    },
+    {
+      "model": "google/gemma-4-31b-it",
+      "name": "Gemma",
+      "tradition": "christian",
+      "delta_from_uniform": 0.06864959195914055,
+      "delta_ci95": [
+        0.06336066085786446,
+        0.07418061637633767
+      ],
+      "opportunity_capture": 0.49510315314069603,
+      "capture_ci95": [
+        0.46021858617755707,
+        0.5314122935344007
+      ],
+      "available_above_uniform": 0.13865714957309522
+    },
+    {
+      "model": "google/gemma-4-31b-it",
+      "name": "Gemma",
+      "tradition": "confucian",
+      "delta_from_uniform": 0.17095954798479662,
+      "delta_ci95": [
+        0.1577074621760781,
+        0.18381938533823639
+      ],
+      "opportunity_capture": 0.5378810955284826,
+      "capture_ci95": [
+        0.5039516659525917,
+        0.5688138135582526
+      ],
+      "available_above_uniform": 0.3178389227768347
+    },
+    {
+      "model": "google/gemma-4-31b-it",
+      "name": "Gemma",
+      "tradition": "hindu",
+      "delta_from_uniform": 0.09980551947280933,
+      "delta_ci95": [
+        0.09110966229133552,
+        0.10852295825491558
+      ],
+      "opportunity_capture": 0.5398021584158293,
+      "capture_ci95": [
+        0.5045181564215918,
+        0.5732404052951551
+      ],
+      "available_above_uniform": 0.18489277583793112
+    },
+    {
+      "model": "google/gemma-4-31b-it",
+      "name": "Gemma",
+      "tradition": "islamic",
+      "delta_from_uniform": 0.12973326605056162,
+      "delta_ci95": [
+        0.11900131089928381,
+        0.14043872982193678
+      ],
+      "opportunity_capture": 0.5255710445123808,
+      "capture_ci95": [
+        0.4892206439545809,
+        0.5598389303686907
+      ],
+      "available_above_uniform": 0.24684249142934953
+    },
+    {
+      "model": "google/gemma-4-31b-it",
+      "name": "Gemma",
+      "tradition": "jewish",
+      "delta_from_uniform": 0.1517153670799184,
+      "delta_ci95": [
+        0.13853365340526788,
+        0.16477149552828446
+      ],
+      "opportunity_capture": 0.5494277281616559,
+      "capture_ci95": [
+        0.5141271105920523,
+        0.5836720837481516
+      ],
+      "available_above_uniform": 0.27613343721756944
+    },
+    {
+      "model": "google/gemma-4-31b-it",
+      "name": "Gemma",
+      "tradition": "rationalist",
+      "delta_from_uniform": 0.12906816064105497,
+      "delta_ci95": [
+        0.11921089299800025,
+        0.13802909333754487
+      ],
+      "opportunity_capture": 0.5862702456905026,
+      "capture_ci95": [
+        0.557726198396007,
+        0.612379698101926
+      ],
+      "available_above_uniform": 0.22015130665387928
+    },
+    {
+      "model": "google/gemma-4-31b-it",
+      "name": "Gemma",
+      "tradition": "stoic",
+      "delta_from_uniform": 0.16935225960886882,
+      "delta_ci95": [
+        0.1575158888057187,
+        0.18091475984805488
+      ],
+      "opportunity_capture": 0.5894916454000534,
+      "capture_ci95": [
+        0.5576288251554459,
+        0.618565630542792
+      ],
+      "available_above_uniform": 0.2872852582905384
+    },
+    {
+      "model": "google/gemma-4-31b-it",
+      "name": "Gemma",
+      "tradition": "taoist",
+      "delta_from_uniform": 0.10700083229933949,
+      "delta_ci95": [
+        0.09539147188436098,
+        0.11901694909956054
+      ],
+      "opportunity_capture": 0.4533531220256473,
+      "capture_ci95": [
+        0.4140977028980323,
+        0.49257930101014985
+      ],
+      "available_above_uniform": 0.23602094504443755
+    },
+    {
+      "model": "anthropic/claude-haiku-5.5",
+      "name": "Haiku",
+      "tradition": "buddhist",
+      "delta_from_uniform": 0.19676450753114716,
+      "delta_ci95": [
+        0.18531464165103717,
+        0.20841587793832222
+      ],
+      "opportunity_capture": 0.6787752324469863,
+      "capture_ci95": [
+        0.6510181352495097,
+        0.7048898450318093
+      ],
+      "available_above_uniform": 0.28988168413542525
+    },
+    {
+      "model": "anthropic/claude-haiku-5.5",
+      "name": "Haiku",
+      "tradition": "christian",
+      "delta_from_uniform": 0.08593169595073719,
+      "delta_ci95": [
+        0.08055342253141269,
+        0.0913166566460218
+      ],
+      "opportunity_capture": 0.6197422651144072,
+      "capture_ci95": [
+        0.5865550876543715,
+        0.6510784202302407
+      ],
+      "available_above_uniform": 0.13865714957309522
+    },
+    {
+      "model": "anthropic/claude-haiku-5.5",
+      "name": "Haiku",
+      "tradition": "confucian",
+      "delta_from_uniform": 0.21130977001391127,
+      "delta_ci95": [
+        0.19718855864672283,
+        0.224747870604034
+      ],
+      "opportunity_capture": 0.6648328913519472,
+      "capture_ci95": [
+        0.6338053156521309,
+        0.6934744105360778
+      ],
+      "available_above_uniform": 0.3178389227768347
+    },
+    {
+      "model": "anthropic/claude-haiku-5.5",
+      "name": "Haiku",
+      "tradition": "hindu",
+      "delta_from_uniform": 0.12479336982188835,
+      "delta_ci95": [
+        0.11644305851866,
+        0.13303755655474672
+      ],
+      "opportunity_capture": 0.6749499500795896,
+      "capture_ci95": [
+        0.6483778812331048,
+        0.6994795106968322
+      ],
+      "available_above_uniform": 0.18489277583793112
+    },
+    {
+      "model": "anthropic/claude-haiku-5.5",
+      "name": "Haiku",
+      "tradition": "islamic",
+      "delta_from_uniform": 0.1612665019017203,
+      "delta_ci95": [
+        0.1500038819233266,
+        0.1721166210492842
+      ],
+      "opportunity_capture": 0.6533174291342683,
+      "capture_ci95": [
+        0.6212019501274287,
+        0.6836977183544549
+      ],
+      "available_above_uniform": 0.24684249142934953
+    },
+    {
+      "model": "anthropic/claude-haiku-5.5",
+      "name": "Haiku",
+      "tradition": "jewish",
+      "delta_from_uniform": 0.18677915634511943,
+      "delta_ci95": [
+        0.17407972482607925,
+        0.19926268083271242
+      ],
+      "opportunity_capture": 0.6764090514614263,
+      "capture_ci95": [
+        0.6475459531783314,
+        0.7026700961133394
+      ],
+      "available_above_uniform": 0.27613343721756944
+    },
+    {
+      "model": "anthropic/claude-haiku-5.5",
+      "name": "Haiku",
+      "tradition": "rationalist",
+      "delta_from_uniform": 0.14495350306034593,
+      "delta_ci95": [
+        0.1346175661113464,
+        0.15492323557263032
+      ],
+      "opportunity_capture": 0.6584267214377295,
+      "capture_ci95": [
+        0.6293559839304474,
+        0.683242032046662
+      ],
+      "available_above_uniform": 0.22015130665387928
+    },
+    {
+      "model": "anthropic/claude-haiku-5.5",
+      "name": "Haiku",
+      "tradition": "stoic",
+      "delta_from_uniform": 0.20113495422042554,
+      "delta_ci95": [
+        0.1890039747839592,
+        0.2128815548793912
+      ],
+      "opportunity_capture": 0.7001227818554232,
+      "capture_ci95": [
+        0.6745705378233691,
+        0.7232752813485097
+      ],
+      "available_above_uniform": 0.2872852582905384
+    },
+    {
+      "model": "anthropic/claude-haiku-5.5",
+      "name": "Haiku",
+      "tradition": "taoist",
+      "delta_from_uniform": 0.13832031147838486,
+      "delta_ci95": [
+        0.12726651747631623,
+        0.1505459212472035
+      ],
+      "opportunity_capture": 0.5860510026020876,
+      "capture_ci95": [
+        0.5527029788019228,
+        0.619901404133076
+      ],
+      "available_above_uniform": 0.23602094504443755
+    }
+  ]
+}

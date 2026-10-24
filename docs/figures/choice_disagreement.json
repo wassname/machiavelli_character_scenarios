@@ -1,0 +1,62 @@
+{
+  "author": "PI/OpenAI",
+  "protocol": "Legacy character-role prompt; original order plus reversal, averaged per scene.",
+  "scope": "Historical pool, before forward-looking-choice eligibility review. Separate cohorts; no moral quality ranking.",
+  "full_source_counts": {
+    "daily_dilemmas": 1360,
+    "machiavelli": 2500
+  },
+  "full_weighting": "Each scene equally weighted: 65% game scenes, 35% everyday. Pilot sources each receive 50% weight.",
+  "pilot_source_counts": {
+    "machiavelli": 32,
+    "daily_dilemmas": 32
+  },
+  "pilot_estimand": "Between-condition disagreement minus mean within-condition repeat disagreement; population value equals half the squared Euclidean distance between categorical choice distributions. Per-scene/order estimates are averaged with equal source weight.",
+  "pilot_uncertainty": "2,000 game/topic-grouped bootstrap resamples within source; each scene retains its correlated repeats. Assumes repeated calls approximate independent draws under recorded service settings. No labels or classifier scores enter.",
+  "pilot_limits": "64 fixed-seed, source-balanced scenes, not an estimate for all 3,860. Choice distributions do not identify intrinsic moral values; interpretation and temporal service changes remain possible confounds.",
+  "input_sha256": {
+    "pair_coverage": "14d147030ae3a2b95683ad20d44204a46c562f7cde15177be33d2f82be1d75b2",
+    "repeat_analysis": "90f1c29ad31ca5043721e30ca699402eccffdc1e7157865a0b86eaacb4b48d3a"
+  },
+  "rows": [
+    {
+      "pair": "Gemma / Haiku",
+      "full_scenes": 3860,
+      "full_disagreement": 0.280699481865285,
+      "pilot_scenes": 64,
+      "pilot_between": 0.25,
+      "pilot_within": 0.018229166666666668,
+      "pilot_difference": 0.23177083333333331,
+      "pilot_ci95": [
+        0.14796401515151514,
+        0.3132102272727273
+      ]
+    },
+    {
+      "pair": "DeepSeek / Haiku",
+      "full_scenes": 3860,
+      "full_disagreement": 0.25673575129533677,
+      "pilot_scenes": 64,
+      "pilot_between": 0.22395833333333334,
+      "pilot_within": 0.0234375,
+      "pilot_difference": 0.20052083333333331,
+      "pilot_ci95": [
+        0.13204656862745098,
+        0.2682291666666667
+      ]
+    },
+    {
+      "pair": "DeepSeek / Gemma",
+      "full_scenes": 3860,
+      "full_disagreement": 0.23730569948186528,
+      "pilot_scenes": 64,
+      "pilot_between": 0.22135416666666666,
+      "pilot_within": 0.015625,
+      "pilot_difference": 0.20572916666666669,
+      "pilot_ci95": [
+        0.13746843434343436,
+        0.2774203431372549
+      ]
+    }
+  ]
+}

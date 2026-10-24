@@ -15,6 +15,28 @@ In the labelled scenarios, every action has a score for 80 virtues and vices fro
 
 [Dataset](https://huggingface.co/datasets/wassname/virtue-choices) · [Code](https://github.com/wassname/virtue-choices)
 
+## New comparison: do models choose differently?
+
+DeepSeek v4.1 Flash, Gemma 4 31B and Haiku 5.5 each completed all 3,860 virtue-labelled scenarios in both option orders: 23,160 replies. Mistral Small adds a separate 100-scene comparison, not part of these figures.
+
+![New nine-tradition virtue profiles for three models on all 3,860 scenes, with grouped confidence intervals](docs/figures/virtue_profiles_3860.png)
+
+Both panels use the same 3,860 scenes, giving the game and everyday sources equal weight. Left: the chosen action's score minus uniform choice. Right: that improvement divided by the improvement available from choosing the highest-scored option in each scene. Zero is uniform choice; one is the best available score under these labels. Lines are 95% game/topic-grouped bootstrap intervals, jointly resampling numerator and denominator for the right panel. They do not include errors in the labels or source questions. Compare models within a tradition, not the absolute scores of different traditions. The mean ordering is the same in all nine traditions; this does not establish a distinctive cultural identity or overall moral ranking.
+
+[Full virtue estimates, intervals and input hashes](docs/figures/virtue_profiles_3860.json). Recreate without inference: `uv run scripts/evaluation/plot_virtue_profiles.py`.
+
+Pairwise choices differ on 24–28% of matched views:
+
+![Different choices across the full original pool, and differences beyond repeat variation on a separate 64-scene pilot](docs/figures/choice_disagreement.png)
+
+The left panel averages disagreement across original and reversed option orders, weighting each scene equally (65% game, 35% everyday). The right panel gives the two sources equal weight in a separate 64-scene pilot, 32 per source, with three fresh replies to each exact prompt and order. It subtracts average within-model repeat disagreement from between-model disagreement. All three 95% game/topic-grouped intervals remain above zero. This pilot does not estimate repeat variation for the entire pool.
+
+This improves coverage and checks repeat variation; it does not yet validate a test of the model's own moral preferences. These runs used the earlier character-role instruction and original source order plus reversal, without an initial shuffle. The pool still includes some history/identity menus. The next protocol will exclude non-forward-looking choices before calls, randomise positions, and test whether models can reject the character's stated goals. Those changes are not results from a new run.
+
+[Figure values and input hashes](docs/figures/choice_disagreement.json). Recreate the figure without inference calls: `uv run scripts/evaluation/plot_choice_disagreement.py`.
+
+<!-- New comparison and figure: PI/OpenAI. -->
+
 ## Examples
 
 Each table first shows the directly judged virtue label whose scores differ most between that scene's choices. Then, from the labels that differ at least as much as the median label, it shows the two that rank the choices most differently from the first. The last three columns come from the other label sets, the same for both sources: the two D&D alignment axes, and the behaviour label that differs most. The 26 behaviour labels are MACHIAVELLI's 18, such as intending harm, plus 8 more, such as loyalty. All 80 virtue labels are in the data, and [the label list](https://github.com/wassname/virtue-choices/blob/main/docs/labels.md#all-80-labels) names them.
@@ -85,7 +107,7 @@ The game's own question was “Perhaps you should treat it like:”. You are cho
 
 Example: `machiavelli_reckless-space-pirates_Reckless_Space_Pirates-trap_192-1382`, chosen for the setting and the misreading.
 
-### The instructions a model gets
+### Instructions used for the earlier comparison
 
 The model sees no labels or teachings. Its request starts with this system message, followed by a scene like the one above. It returns its choice and its reasoning.
 
@@ -111,7 +133,7 @@ print(labels[choice_id]["buddhist|ten_perfections|Loving-kindness"])
 
 Each row is one scenario. `text` is the prompt; send only `text` to the model you evaluate, because other columns hold labels and source notes, some based on outcomes the player cannot see. `choice_text` and `choice_virtue_labels` are JSON maps keyed by the same choice IDs. Rows without virtue labels have `has_virtue_labels=False` and an empty map. Ten scenes with known input problems, such as the space pirates, are flagged in `scenario_review_flags`; an empty flag list does not mean a scene was checked. [Label fields](https://github.com/wassname/virtue-choices/blob/main/docs/labels.md) explains every column.
 
-## Does DeepSeek choose more Confucian actions?
+## Earlier 500-scene comparison: does DeepSeek choose more Confucian actions?
 
 We asked two models to choose actions in 500 game scenes: DeepSeek v4.1 Flash, made in China (red), and Google's Gemma 4 31B (blue). A model that chose at random would score zero. Both scored above zero in all nine traditions. Each tradition has different virtues, so compare the two models within a row, not traditions with each other.
 
