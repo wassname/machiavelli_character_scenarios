@@ -4,6 +4,10 @@ set shell := ["bash", "-cu"]
 default:
     @just --list
 
+# PI/OpenAI: Download the published dataset for evaluation.
+data:
+    uv run --locked hf download wassname/virtue-choices parquet/train.parquet --repo-type dataset --local-dir data/processed
+
 # PI/OpenAI: Check the real source and request path without API calls.
 offline-check:
     #!/usr/bin/env bash

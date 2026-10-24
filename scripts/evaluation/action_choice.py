@@ -182,7 +182,7 @@ def prepare(args: argparse.Namespace, config: dict) -> tuple[list[dict], dict]:
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--inputs", type=Path, default=ROOT / "outputs/virtue_release/parquet/train.parquet")
+    parser.add_argument("--inputs", type=Path, default=ROOT / "data/processed/parquet/train.parquet")
     parser.add_argument("--virtues", type=Path, help="Optional choice-level overlay; otherwise read the dataset's embedded virtue labels")
     parser.add_argument("--count", type=int, default=500)
     parser.add_argument("--seed", type=int, default=20261023)
