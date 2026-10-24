@@ -17,9 +17,9 @@ offline-check:
     HF_HUB_OFFLINE=1 uv run --locked python scripts/data/prepare_inputs.py --limit 2 --out "$out/inputs"
     HF_HUB_OFFLINE=1 uv run --locked python scripts/data/label_actions.py --inputs "$out/inputs/inputs.jsonl" --limit 2 --dry-run --out "$out/requests"
 
-# PI/OpenAI: Real API, cache and export on two scenarios.
-fast-dev-run *args:
-    BEARTYPE=1 uv run --locked python scripts/data/label_actions.py --limit 2 --concurrency 2 {{args}}
+# PI/OpenAI: Real API, scoring, runtime types and cache on two scenarios (at most $0.05).
+fast-dev-run *args: data
+    BEARTYPE=1 uv run --locked python scripts/checks/fast_dev_run.py {{args}}
 
 # PI/OpenAI: Restore displayed choices without model calls.
 prepare out:

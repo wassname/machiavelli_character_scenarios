@@ -4,6 +4,7 @@ import argparse
 from collections import Counter, defaultdict
 import hashlib
 import json
+import os
 from pathlib import Path
 import random
 
@@ -134,6 +135,11 @@ def score(run: Path, virtues: Path, *, replicates: int = 1000) -> dict:
 
 
 if __name__ == "__main__":
+    if os.environ.get("BEARTYPE"):
+        from beartype import beartype
+        uniform_baseline = beartype(uniform_baseline)
+        cluster_interval = beartype(cluster_interval)
+        score = beartype(score)
     parser = argparse.ArgumentParser()
     parser.add_argument("run", type=Path)
     parser.add_argument("--virtues", type=Path, required=True)

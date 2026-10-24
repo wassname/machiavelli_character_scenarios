@@ -34,7 +34,7 @@ def transient_provider_error(body: dict) -> bool:
 
 
 async def run_requests(packets: list[dict], out: Path, *, max_new_usd: float, concurrency: int = 8,
-                       key_source: str = "env") -> dict:
+                       key_source: str = "env", refresh: bool = False) -> dict:
     ledger = ROOT / ".local/billing.jsonl"
     ledger.parent.mkdir(parents=True, exist_ok=True)
     history = [json.loads(line) for line in ledger.open()] if ledger.exists() else []
@@ -58,7 +58,7 @@ async def run_requests(packets: list[dict], out: Path, *, max_new_usd: float, co
                     payload = packet["request"]
                     key = digest(payload)
                     path = cache / (key + ".json.gz")
-                    cached = path.exists()
+                    cached = path.exists() and not refresh
                     if cached:
                         record = json.loads(gzip.decompress(path.read_bytes()))
                         assert record["request"] == payload and record["request_key"] == key

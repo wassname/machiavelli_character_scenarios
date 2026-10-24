@@ -169,6 +169,7 @@ def prepare(args: argparse.Namespace, config: dict) -> tuple[list[dict], dict]:
                 "games": len({row["game_id"] for row in scenes}), "requests": len(packets), "seed": args.seed,
                 "scene_table_sha256": file_sha(args.inputs), "virtue_table_sha256": file_sha(args.virtues),
                 "virtue_table_source": "embedded dataset labels" if embedded else "explicit overlay",
+                "runtime_type_checking": bool(os.environ.get("BEARTYPE")),
                 "model_config": config, "model_config_sha256": digest(config), "estimates": estimates,
                 "central_total_usd": sum(value["central_usd"] for value in estimates.values()),
                 "conservative_total_usd": sum(value["conservative_usd"] for value in estimates.values()),
@@ -188,6 +189,7 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=20261023)
     parser.add_argument("--allow-paid", action="store_true")
     parser.add_argument("--key-source", choices=["env", "pi"], default="env")
+    parser.add_argument("--refresh", action="store_true", help="Make fresh requests instead of reusing cached replies")
     parser.add_argument("--max-new-usd", type=float, default=.1)
     parser.add_argument("--concurrency", type=int, default=8)
     parser.add_argument("--out", type=Path, required=True)
@@ -207,7 +209,7 @@ def main() -> None:
             with (ROOT / ".local/labelling.lock").open("w") as lock:
                 fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
                 result = asyncio.run(run_requests(packets, args.out, max_new_usd=args.max_new_usd,
-                                                 concurrency=args.concurrency, key_source=args.key_source))
+                                                 concurrency=args.concurrency, key_source=args.key_source, refresh=args.refresh))
             parsed = [parse_receipt(json.loads(line), config) for line in (args.out / "receipts.jsonl").open()]
             with (args.out / "choices.jsonl").open("w") as stream:
                 for row in parsed:
@@ -221,4 +223,11 @@ def main() -> None:
 
 
 if __name__ == "__main__":
+    if os.environ.get("BEARTYPE"):
+        from beartype import beartype
+        embedded_overlay = beartype(embedded_overlay)
+        select_scenes = beartype(select_scenes)
+        render = beartype(render)
+        build_packet = beartype(build_packet)
+        parse_receipt = beartype(parse_receipt)
     main()
