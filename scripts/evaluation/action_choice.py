@@ -16,6 +16,7 @@ import sys
 import time
 import traceback
 
+import pyarrow as pa
 import pyarrow.parquet as pq
 from loguru import logger
 
@@ -34,6 +35,24 @@ REFUSAL = re.compile(r"\b(?:i (?:cannot|can't|won't|will not) (?:choose|select|a
 
 def file_sha(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def embedded_overlay(inputs: Path, out: Path) -> Path:
+    columns = ["source_id", "source", "choice_text", "has_virtue_labels", "choice_virtue_labels", "virtue_selection_priority"]
+    assert set(columns) <= set(pq.read_schema(inputs).names), "Use the virtue-labelled dataset; the earlier release lacks these labels"
+    choices = []
+    for row in pq.read_table(inputs, columns=columns).to_pylist():
+        if row["source"] != "machiavelli" or not row["has_virtue_labels"]:
+            continue
+        labels = json.loads(row["choice_virtue_labels"])
+        assert labels.keys() == json.loads(row["choice_text"]).keys(), "Partial scene labels"
+        for choice_id, virtues in labels.items():
+            assert len(virtues) == 80
+            choices.append({"source_id": row["source_id"], "choice_id": choice_id,
+                            "selection_priority": row["virtue_selection_priority"], "virtues": virtues})
+    assert choices, "No labelled MACHIAVELLI choices"
+    pq.write_table(pa.Table.from_pylist(choices), out)
+    return out
 
 
 def select_scenes(path: Path, overlay: Path, count: int, seed: int) -> list[dict]:
@@ -130,6 +149,9 @@ def parse_receipt(record: dict, config: dict) -> dict:
 
 
 def prepare(args: argparse.Namespace, config: dict) -> tuple[list[dict], dict]:
+    embedded = args.virtues is None
+    if embedded:
+        args.virtues = embedded_overlay(args.inputs, args.out / "virtues.parquet")
     scenes = select_scenes(args.inputs, args.virtues, args.count, args.seed)
     with (args.out / "scenes.jsonl").open("w") as stream:
         for row in scenes:
@@ -146,6 +168,7 @@ def prepare(args: argparse.Namespace, config: dict) -> tuple[list[dict], dict]:
     manifest = {"author": "PI/Sol", "task": "Choose a game action, not classify virtues", "scenes": len(scenes),
                 "games": len({row["game_id"] for row in scenes}), "requests": len(packets), "seed": args.seed,
                 "scene_table_sha256": file_sha(args.inputs), "virtue_table_sha256": file_sha(args.virtues),
+                "virtue_table_source": "embedded dataset labels" if embedded else "explicit overlay",
                 "model_config": config, "model_config_sha256": digest(config), "estimates": estimates,
                 "central_total_usd": sum(value["central_usd"] for value in estimates.values()),
                 "conservative_total_usd": sum(value["conservative_usd"] for value in estimates.values()),
@@ -159,11 +182,12 @@ def prepare(args: argparse.Namespace, config: dict) -> tuple[list[dict], dict]:
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--inputs", type=Path, default=ROOT / "outputs/20261023_virtues_v2_local_release/parquet/train.parquet")
-    parser.add_argument("--virtues", type=Path, default=ROOT / "outputs/20261023_virtues_v2_contrast_2500_resumed/virtues.parquet")
+    parser.add_argument("--inputs", type=Path, default=ROOT / "outputs/virtue_release/parquet/train.parquet")
+    parser.add_argument("--virtues", type=Path, help="Optional choice-level overlay; otherwise read the dataset's embedded virtue labels")
     parser.add_argument("--count", type=int, default=500)
     parser.add_argument("--seed", type=int, default=20261023)
     parser.add_argument("--allow-paid", action="store_true")
+    parser.add_argument("--key-source", choices=["env", "pi"], default="env")
     parser.add_argument("--max-new-usd", type=float, default=.1)
     parser.add_argument("--concurrency", type=int, default=8)
     parser.add_argument("--out", type=Path, required=True)
@@ -182,7 +206,8 @@ def main() -> None:
         if args.allow_paid:
             with (ROOT / ".local/labelling.lock").open("w") as lock:
                 fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                result = asyncio.run(run_requests(packets, args.out, max_new_usd=args.max_new_usd, concurrency=args.concurrency))
+                result = asyncio.run(run_requests(packets, args.out, max_new_usd=args.max_new_usd,
+                                                 concurrency=args.concurrency, key_source=args.key_source))
             parsed = [parse_receipt(json.loads(line), config) for line in (args.out / "receipts.jsonl").open()]
             with (args.out / "choices.jsonl").open("w") as stream:
                 for row in parsed:

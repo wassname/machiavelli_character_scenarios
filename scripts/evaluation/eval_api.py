@@ -16,6 +16,7 @@ from loguru import logger
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "scripts/data"))
 from billing_reservations import outstanding, unknown_fees, noncash_reviews
+from label_actions import api_key
 
 SCOPE = "action-choice-eval-v1"
 RESERVATION = .01
@@ -32,9 +33,11 @@ def transient_provider_error(body: dict) -> bool:
     return code in {408, 429} or 500 <= code < 600
 
 
-async def run_requests(packets: list[dict], out: Path, *, max_new_usd: float, concurrency: int = 8) -> dict:
+async def run_requests(packets: list[dict], out: Path, *, max_new_usd: float, concurrency: int = 8,
+                       key_source: str = "env") -> dict:
     ledger = ROOT / ".local/billing.jsonl"
-    history = [json.loads(line) for line in ledger.open()]
+    ledger.parent.mkdir(parents=True, exist_ok=True)
+    history = [json.loads(line) for line in ledger.open()] if ledger.exists() else []
     project_before = sum(row["cost_usd"] for row in history)
     scope_before = sum(row["cost_usd"] for row in history if row.get("scope") == SCOPE)
     new = reserved = 0.0
@@ -43,10 +46,8 @@ async def run_requests(packets: list[dict], out: Path, *, max_new_usd: float, co
     work = iter(packets)
     cache = ROOT / "data/interim/action_choice_cache"
     cache.mkdir(parents=True, exist_ok=True)
-    auth = json.loads((Path.home() / ".pi/agent/auth.json").read_text())
-    assert auth["openrouter"]["type"] == "api_key"
-    headers = {"Authorization": "Bearer " + auth["openrouter"]["key"],
-               "X-OpenRouter-Title": "machiavelli-character-scenarios/action-choice-eval"}
+    headers = {"Authorization": "Bearer " + api_key(key_source),
+               "X-OpenRouter-Title": "virtue-choices/action-choice-eval"}
     async with httpx.AsyncClient(headers=headers, timeout=180) as client:
         with (out / "receipts.jsonl").open("w") as receipts:
             async def worker():
@@ -67,7 +68,7 @@ async def run_requests(packets: list[dict], out: Path, *, max_new_usd: float, co
                     if cached:
                         counts["cache_hits"] += 1
                     else:
-                        assert project_before + new + reserved + outstanding(ROOT) + RESERVATION <= 58, "Cumulative evaluation cap $58 reached"
+                        assert project_before + new + reserved + outstanding(ROOT) + RESERVATION <= 70, "Cumulative project cap $70 reached"
                         assert scope_before + new + reserved + outstanding(ROOT, SCOPE) + RESERVATION <= 2, "Evaluation scope cap $2 (including pilots/replays) reached"
                         assert new + reserved + RESERVATION <= max_new_usd, "This evaluation run's cap reached"
                         reserved += RESERVATION

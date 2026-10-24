@@ -5,6 +5,7 @@ from collections import Counter
 import hashlib
 import json
 from pathlib import Path
+import re
 import shutil
 
 import pyarrow as pa
@@ -129,6 +130,11 @@ def stage(base: Path, run: Path, native_verification: Path, out: Path, *, dd_inp
     assert pq.read_table(parquet).equals(merged), "Parquet round-trip changed fields"
     shutil.copyfile(ROOT / "CITATION.cff", out / "CITATION.cff")
     (out / "README.md").write_text(card)
+    for relative in re.findall(r"!\[[^\]]*\]\((docs/figures/[^)]+)\)", card):
+        assert (ROOT / relative).resolve().is_relative_to(ROOT / "docs/figures")
+        target = out / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(ROOT / relative, target)
     examples = out / "examples"
     examples.mkdir()
     shutil.copyfile(ROOT / "examples/judge_request.json", examples / "visible_actions_v4_jev_1_13_request.json")

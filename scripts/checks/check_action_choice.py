@@ -2,14 +2,18 @@
 
 import copy
 import json
+import os
 from pathlib import Path
 import sys
 import tempfile
+from unittest.mock import patch
+
+import pyarrow.parquet as pq
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "evaluation"))
-from action_choice import MODEL_PATH, ROOT, build_packet, parse_receipt, render, select_scenes
+from action_choice import MODEL_PATH, ROOT, build_packet, embedded_overlay, parse_receipt, render, select_scenes
 from score_action_choice import uniform_baseline, cluster_interval
-from eval_api import transient_provider_error
+from eval_api import api_key, transient_provider_error
 from billing_reservations import outstanding, unknown_fees, noncash_reviews
 
 
@@ -58,6 +62,14 @@ def main() -> None:
     assert cluster_interval({"a": [0., 0.], "b": [0., 0.]}, {"a": "game1", "b": "game2"}, seed=1, replicates=100) == [(0., 0.), (0., 0.)]
     with tempfile.TemporaryDirectory() as temporary:
         root = Path(temporary)
+        combined = ROOT / "outputs/20261023_combined_review/parquet/train.parquet"
+        overlay = embedded_overlay(combined, root / "virtues.parquet")
+        selected = select_scenes(combined, overlay, 1, 20261023)[0]
+        assert selected == row
+        assert build_packet(selected, "forward", model, config) == forward
+        original = pq.read_table(ROOT / "outputs/20261023_virtues_v2_contrast_2500_resumed/virtues.parquet").to_pylist()
+        extracted = pq.read_table(overlay).to_pylist()
+        assert {(r["source_id"], r["choice_id"]): r["virtues"] for r in original} == {(r["source_id"], r["choice_id"]): r["virtues"] for r in extracted}
         (root / ".local").mkdir()
         (root / ".local/billing_reservations.json").write_text(json.dumps([
             {"response_id": "one", "scope": "eval", "reserved_usd": .01},
@@ -66,7 +78,9 @@ def main() -> None:
             {"run_id": "native-review", "reported_cost_usd": {"costUsd": .5}}]))
         assert abs(unknown_fees(root) - .02) < 1e-12 and noncash_reviews(root) == .5
         assert abs(outstanding(root) - .52) < 1e-12 and outstanding(root, "eval") == .01
-    print("PASS: hidden labels excluded; only action block reordered; reverse IDs map to original choices; no provider fallback; refusals/length/malformed choices separated; uniform-null deltas and zero bootstrap control hold. No API calls. -- PI/Sol")
+    with patch.dict(os.environ, {"OPENROUTER_API_KEY": "offline-marker"}), patch.object(Path, "read_text", side_effect=AssertionError("Unexpected credential-file read")):
+        assert api_key("env") == "offline-marker"
+    print("PASS: embedded labels match the original overlay and requests; caller environment key needs no Pi credentials; hidden labels excluded; reverse IDs map correctly; errors stay separate; uniform-null controls hold. No API calls. -- PI/Sol and PI/OpenAI")
 
 
 if __name__ == "__main__":
