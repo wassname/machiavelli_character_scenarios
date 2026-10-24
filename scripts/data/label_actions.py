@@ -75,7 +75,7 @@ async def label(args: argparse.Namespace, rows: list[dict], run_log: Path) -> No
     cache_hits = 0
     stopping = False
     key = api_key(args.key_source)
-    headers = {"Authorization": "Bearer " + key, "HTTP-Referer": "https://huggingface.co/datasets/wassname/machiavelli_character_scenarios", "X-OpenRouter-Title": "machiavelli-character-scenarios/visible-actions"}
+    headers = {"Authorization": "Bearer " + key, "HTTP-Referer": "https://huggingface.co/datasets/wassname/virtue-choices", "X-OpenRouter-Title": "virtue-choices/visible-actions"}
 
     async with httpx.AsyncClient(headers=headers, timeout=120) as client:
         async def one(row: dict, choice: str) -> None:

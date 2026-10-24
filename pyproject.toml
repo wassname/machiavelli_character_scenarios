@@ -1,7 +1,7 @@
 [project]
-name = "machiavelli-character-scenarios"
+name = "virtue-choices"
 version = "0.1.0"
-description = "Reproducible MACHIAVELLI scene summaries and source-grounded quality checks."
+description = "Virtue-labelled action choices from text-adventure games and everyday dilemmas."
 requires-python = ">=3.11"
 readme = "README.md"
 license = "MIT"

@@ -14,8 +14,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent / "data"))
 from dataset_io import SOURCES, ROOT
 from prepare_inputs import INPUT_REVISION
 
-REPO = "wassname/machiavelli_character_scenarios"
-CODE = "https://github.com/wassname/machiavelli_character_scenarios"
+REPO = "wassname/virtue-choices"
+CODE = "https://github.com/wassname/virtue-choices"
 
 
 def dataset_card() -> str:
