@@ -147,7 +147,7 @@ def build_packet(row: dict, order: str, model: str, config: dict) -> dict:
     settings = config["models"][model]
     payload = {"model": model, "provider": settings["provider"], "reasoning": settings["reasoning"],
                **settings["sampling_parameters"], "max_tokens": config["max_tokens"],
-               "messages": [{"role": "system", "content": SYSTEM}, {"role": "user", "content": content}],
+               "messages": [{"role": "system", "content": config["system_prompt"] if "system_prompt" in config else SYSTEM}, {"role": "user", "content": content}],
                "response_format": {"type": "json_schema", "json_schema": {"name": "action_choice", "strict": True, "schema": schema}}}
     return {"request": payload, "metadata": {"source_id": row["source_id"], "game_id": row["game_id"],
              "model": model, "order": order, "source": row["source"], "eval_cluster": row["eval_cluster"],

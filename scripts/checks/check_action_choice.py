@@ -31,6 +31,10 @@ def main() -> None:
     contaminated = row | {"choice_virtue_labels": "SENTINEL_HIDDEN_VIRTUE_LABEL", "choice_labels": "SENTINEL_HIDDEN_OUTCOME"}
     assert build_packet(contaminated, "forward", model, config) == forward
     assert "SENTINEL_HIDDEN" not in json.dumps(forward["request"])
+    framed = build_packet(row, "forward", model, config | {"system_prompt": "Explicit experimental framing"})
+    assert framed["request"] | {"messages": forward["request"]["messages"]} == forward["request"]
+    assert framed["request"]["messages"][1] == forward["request"]["messages"][1]
+    assert framed["request"]["messages"][0]["content"] == "Explicit experimental framing"
     assert forward["request"]["provider"]["allow_fallbacks"] is False
     assert set(reverse["metadata"]["displayed_to_original"].values()) == set(row["choice_text"])
     assert list(forward["metadata"]["displayed_to_original"].values()) == list(reverse["metadata"]["displayed_to_original"].values())[::-1]
