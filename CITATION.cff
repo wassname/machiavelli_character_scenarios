@@ -1,18 +1,19 @@
-# PI/OpenAI: citation metadata for the derived dataset.
+# PI/OpenAI: citation metadata for the derived dataset. Title and URLs updated by PI/Claude-opus-5-5.
 cff-version: 1.2.0
-message: "Please cite this dataset and the original MACHIAVELLI paper listed below."
+message: "Please cite this dataset and the listed sources for the scenarios and virtue labels you use."
 type: dataset
-title: "MACHIAVELLI character scenarios"
+title: "Virtue Choices"
 authors:
   - family-names: Clark
     given-names: Michael J.
     alias: wassname
-repository-code: "https://github.com/wassname/machiavelli_character_scenarios"
-url: "https://huggingface.co/datasets/wassname/machiavelli_character_scenarios"
-version: "1.0.0"
-date-released: "2026-10-18"
-license: MIT
-abstract: "Short game scenes and choice-level model estimates for studying moral decisions and character in language models, derived from MACHIAVELLI."
+repository-code: "https://github.com/wassname/virtue-choices"
+url: "https://huggingface.co/datasets/wassname/virtue-choices"
+version: "2.0.0-preview"
+license:
+  - MIT
+  - CC-BY-4.0
+abstract: "Game scenes and everyday dilemmas with choice-level virtue judgements for studying language models' stated decisions. This local preview combines MACHIAVELLI and DailyDilemmas with teachings from tiny-virtues; source licences apply by dataset."
 references:
   - type: conference-paper
     title: "Do the Rewards Justify the Means? Measuring Trade-Offs Between Rewards and Ethical Behavior in the Machiavelli Benchmark"
@@ -40,3 +41,21 @@ references:
     year: 2023
     collection-title: "Proceedings of the 40th International Conference on Machine Learning"
     url: "https://arxiv.org/abs/2304.03279"
+  - type: report
+    title: "DailyDilemmas: Revealing Value Preferences of LLMs with Quandaries of Daily Life"
+    authors:
+      - family-names: Chiu
+        given-names: Yu Ying
+      - family-names: Jiang
+        given-names: Liwei
+      - family-names: Choi
+        given-names: Yejin
+    year: 2024
+    url: "https://arxiv.org/abs/2410.02683"
+  - type: data
+    title: "tiny-virtues: moral stories from nine traditions, judged by each tradition's virtues"
+    authors:
+      - family-names: Clark
+        given-names: Michael J.
+    year: 2026
+    url: "https://huggingface.co/datasets/wassname/tiny-virtues"

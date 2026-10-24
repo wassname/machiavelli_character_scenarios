@@ -1,15 +1,20 @@
-license: mit
+license:
+- mit
+- cc-by-4.0
 language:
 - en
 task_categories:
 - text-generation
 - text-classification
-pretty_name: MACHIAVELLI character scenarios
+pretty_name: Virtue Choices
 tags:
 - moral-dilemmas
 - roleplay
 - ai-safety
 - synthetic
+- virtue-ethics
+- multiple-choice
+- model-generated-labels
 size_categories:
 - 10K<n<100K
 configs:
