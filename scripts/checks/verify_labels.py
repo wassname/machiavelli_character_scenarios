@@ -1,6 +1,7 @@
 """Verify saved labels, model inputs, source preservation and billing. PI/OpenAI."""
 
 import argparse
+import csv
 import gzip
 import hashlib
 import json
@@ -12,11 +13,13 @@ from pathlib import Path
 import pyarrow.parquet as pq
 from loguru import logger
 from tabulate import tabulate
+from huggingface_hub import hf_hub_download
 
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "data"))
 
-from dataset_io import ROOT, input_rows, published_rows, select_rows, source_rows
+from dataset_io import ROOT, SOURCES, input_rows, published_rows, select_rows, source_rows
+from billing_reservations import outstanding
 from prepare_inputs import verify_inputs
 from judge_questions import RUBRIC, TASK, identity, interpret, request
 from label_actions import validate
@@ -35,9 +38,22 @@ def verify(run: Path) -> dict:
     original = select_rows(input_rows(path), config["limit"], config["seed"])
     if path is not None:
         assert hashlib.sha256(path.read_bytes()).hexdigest() == config["inputs_sha256"]
-        by_id = {row["source_id"]: row for row in published_rows()}
-        published = [by_id[row["source_id"]] for row in original]
-        verify_inputs(original, published, source_rows(published))
+        if all(row["source"] == "daily_dilemmas" for row in original):
+            ref = SOURCES["daily_dilemmas"]
+            csv_path = hf_hub_download(ref["repository"], ref["file"], repo_type="dataset", revision=ref["revision"])
+            with open(csv_path, newline="") as stream:
+                annotations = {row["idx"]: row for row in csv.DictReader(stream)}
+            for row in original:
+                assert row["source_revision"] == ref["revision"] and row["source_license"] == "cc-by-4.0"
+                for choice, annotation in row["source_annotations"].items():
+                    assert annotation == annotations[annotation["idx"]]
+                    assert row["choice_text"][choice] == annotation["action"]
+                    assert row["decision_context"] == annotation["dilemma_situation"]
+        else:
+            assert all(row["source"] == "machiavelli" for row in original)
+            by_id = {row["source_id"]: row for row in published_rows()}
+            published = [by_id[row["source_id"]] for row in original]
+            verify_inputs(original, published, source_rows(published))
     source = {row["source_id"]: row for row in original}
     expected = {(row["source_id"], key) for row in original for key, text in row["choice_text"].items() if text}
     seen = set()
@@ -117,7 +133,7 @@ def verify(run: Path) -> dict:
     project_spend = sum(row["cost_usd"] for row in ledger)
     run_spend = sum(row["cost_usd"] for row in ledger if (ROOT / row["run"]).resolve() == run.resolve())
     summary = json.loads((run / "summary.json").read_text())
-    assert project_spend <= 40
+    assert project_spend + outstanding(ROOT) <= 70
     assert math.isclose(run_spend, summary["charged_usd"], abs_tol=1e-8)
     assert summary["complete_actions"] == len(expected) == summary["actions"]
     result = {"status": "PASS", "scenarios": len(original), "complete_actions": len(seen), "distinct_request_keys": len(cache_keys), "input_fields_preserved_in_exports": True, "original_fields_unchanged": path is None, "original_annotations_unchanged": True, "original_prompts_retained": True, "input_revision": original[0].get("input_revision", "original-published"), "only_visible_prompt_and_choice_sent": True, "every_saved_score_matches_raw_response": True, "complete_configured_questions_checked": True, "parquet_source_fields_preserved": True, "run_charged_usd": run_spend, "project_total_usd_at_verification": project_spend, "feedback_counts": dict(words), "raw_http_or_transport_errors": dict(api_errors), "caveat": "Artifact integrity and input isolation, not semantic accuracy or calibration."}
@@ -140,7 +156,7 @@ def main() -> None:
         logger.error("## Verification failed\n\n```text\n" + traceback.format_exc() + f"\n```\n\n{run_log}")
         raise
     logger.debug("## Verification details\n\n```json\n" + json.dumps(result, indent=2) + "\n```")
-    table = tabulate([["Scenarios preserved", result["scenarios"]], ["Actions verified", result["complete_actions"]], ["Distinct raw requests checked", result["distinct_request_keys"]], ["Run charge, US$", f"{result['run_charged_usd']:.6f}"], ["Project charge / cap, US$", f"{result['project_total_usd_at_verification']:.6f} / 40"]], headers=["measure", "result"], tablefmt="pipe")
+    table = tabulate([["Scenarios preserved", result["scenarios"]], ["Actions verified", result["complete_actions"]], ["Distinct raw requests checked", result["distinct_request_keys"]], ["Run charge, US$", f"{result['run_charged_usd']:.6f}"], ["Project charge / cap, US$", f"{result['project_total_usd_at_verification']:.6f} / 70"]], headers=["measure", "result"], tablefmt="pipe")
     logger.info(f"## Verified label output\n\n{table}\n\nEvery expected action is present. Input fields and original annotations are preserved; any input repairs were checked against the source observation. Each model state contains only the task, visible prompt and choice. Saved values match their raw responses. This verifies integrity, not semantic accuracy or calibration.\n\nMachine evidence: `{args.run / 'verification.json'}`. Labels: `{args.run / 'labels.jsonl'}`. Export: `{args.run / 'parquet/train.parquet'}`.\n\n{run_log}")
 
 

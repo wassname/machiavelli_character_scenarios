@@ -26,7 +26,10 @@ def request(row: dict, choice_id: str, *, virtues: bool = True) -> dict:
     }
     state = {"task": TASK, "scenario_text": row["text"], "chosen_action": row["choice_text"][choice_id]}
     assert set(state) == {"task", "scenario_text", "chosen_action"}
-    return {"model": MODEL, "state": state, "questions": scored}
+    payload = {"model": MODEL, "state": state, "questions": scored}
+    if row["source"] == "daily_dilemmas":
+        payload["provider"] = {"only": ["typesafe"], "allow_fallbacks": False}
+    return payload
 
 
 def identity(payload: dict) -> str:

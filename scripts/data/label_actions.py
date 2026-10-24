@@ -25,6 +25,7 @@ from tabulate import tabulate
 
 from dataset_io import SOURCES, ROOT, input_rows, select_rows, write_jsonl, write_parquet
 from judge_questions import MODEL, RUBRIC, identity, interpret, request
+from billing_reservations import outstanding, unknown_fees, noncash_reviews
 
 RESERVATION_USD = 0.10
 
@@ -93,7 +94,8 @@ async def label(args: argparse.Namespace, rows: list[dict], run_log: Path) -> No
                     cache_hits += 1
                     cache_hit = True
                 else:
-                    assert spent + reserved + RESERVATION_USD <= args.budget_usd, f"Project budget reservation reached: spent=${spent:.5f}, reserved=${reserved:.2f}, cap=${args.budget_usd:.2f}; cached work retained"
+                    assert spent + reserved + outstanding(ROOT) + RESERVATION_USD <= args.budget_usd, f"Project budget reservation reached: spent=${spent:.5f}, reserved=${reserved:.2f}, cap=${args.budget_usd:.2f}; cached work retained"
+                    assert spent - initial_spend + reserved + RESERVATION_USD <= args.max_new_usd, "This run's budget reservation reached"
                     reserved += RESERVATION_USD
                     try:
                         for attempt in range(4):
@@ -118,12 +120,13 @@ async def label(args: argparse.Namespace, rows: list[dict], run_log: Path) -> No
                                 continue
                             response.raise_for_status()
                             body = response.json()
+                            assert body["model"] == "typesafe/jev-1.13-20260917", "Served judge changed; do not mix label versions"
                             charged = body["usage"]["cost"]
                             assert math.isfinite(charged) and charged >= 0
                             spent += charged
                             paid_requests += 1
                             with ledger.open("a") as stream:
-                                stream.write(json.dumps({"time": event["time"], "request_key": request_key, "cost_usd": charged, "model": body["model"], "run": str(args.out)}) + "\n")
+                                stream.write(json.dumps({"time": event["time"], "request_key": request_key, "response_id": body["id"], "cost_usd": charged, "model": body["model"], "run": str(args.out)}) + "\n")
                             validate(body, payload)
                             record = {"request_key": request_key, "request": payload, "response": body}
                             temporary = path.with_suffix(".tmp")
@@ -160,12 +163,14 @@ async def label(args: argparse.Namespace, rows: list[dict], run_log: Path) -> No
     write_jsonl(args.out / "enriched.jsonl", enriched)
     parquet = args.out / "parquet" / "train.parquet"
     write_parquet(parquet, enriched)
-    exported = pq.read_table(parquet, columns=["source_id", "text", "choice_labels"]).to_pylist()
+    exported = pq.read_table(parquet).to_pylist()
     assert [row["source_id"] for row in exported] == [row["source_id"] for row in rows]
-    assert [row["text"] for row in exported] == [row["text"] for row in rows]
-    assert [json.loads(row["choice_labels"]) for row in exported] == [row["choice_labels"] for row in rows]
+    for original, observed in zip(rows, exported, strict=True):
+        for key, value in original.items():
+            restored = json.loads(observed[key]) if isinstance(value, (dict, list)) else observed[key]
+            assert restored == value, (original["source_id"], key)
     feedback = Counter(row["judge_feedback"]["choice"] for row in done)
-    summary = {"rows": len(rows), "actions": len(actions), "complete_actions": len(done), "new_api_requests": paid_requests, "cache_hits": cache_hits, "charged_usd": spent - initial_spend, "project_total_usd": spent, "budget_usd": args.budget_usd, "feedback_counts": dict(feedback), "rubric_version": RUBRIC["version"], "model": MODEL, "original_labels_sent_to_judge": False, "secret_action_outcomes_sent_to_judge": False, "quality_claim": "Uncalibrated model estimates. Review diagnostic feedback and source examples before interpreting them."}
+    summary = {"rows": len(rows), "actions": len(actions), "complete_actions": len(done), "new_api_requests": paid_requests, "cache_hits": cache_hits, "charged_usd": spent - initial_spend, "project_total_usd": spent, "budget_usd": args.budget_usd, "unbilled_cost_reserved_usd": unknown_fees(ROOT), "noncash_review_estimate_usd": noncash_reviews(ROOT), "conservative_budget_total_usd": spent + outstanding(ROOT), "feedback_counts": dict(feedback), "rubric_version": RUBRIC["version"], "model": MODEL, "original_labels_sent_to_judge": False, "secret_action_outcomes_sent_to_judge": False, "quality_claim": "Uncalibrated model estimates. Review diagnostic feedback and source examples before interpreting them."}
     (args.out / "summary.json").write_text(json.dumps(summary, indent=2) + "\n")
     table = tabulate([[word, count] for word, count in feedback.most_common()], headers=["unscored feedback", "actions"], tablefmt="pipe")
     logger.info(f"## Labels -> completed\n\nEvery proposed action was labelled from the visible prompt. Original labels remain unchanged in enriched.jsonl; any input repairs and original prompts are retained in separate fields. A low probability can mean little evidence; use the separate context issues rather than interpreting it as proof of absence.\n\n## Result\n\nCoverage: {len(done)}/{len(actions)} actions from {len(rows)} scenarios. Charged this run: US${spent - initial_spend:.6f}. Project inference spend: US${spent:.6f} / ${args.budget_usd:.2f}.\n\n{table}\n\nLabels: `{answers_log}`. Full HTTP traces: `{raw_log}`. Original prompts plus both label sets: `{args.out / 'enriched.jsonl'}`.\n\n{run_log}")
@@ -173,17 +178,18 @@ async def label(args: argparse.Namespace, rows: list[dict], run_log: Path) -> No
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--limit", type=int, help="Game-balanced scenario sample size; omit to label all published scenarios")
+    parser.add_argument("--limit", type=int, help="Source-balanced scenario count (games or dilemma topics); omit for every input")
     parser.add_argument("--seed", type=int, default=20261018)
     parser.add_argument("--inputs", type=Path, help="Versioned inputs.jsonl from prepare_inputs.py; omit for original published prompts")
-    parser.add_argument("--budget-usd", type=float, default=40, help="Cumulative project inference cap, including all earlier paid pilots")
+    parser.add_argument("--budget-usd", type=float, default=70, help="Cumulative project cap, including earlier calls and reservations")
+    parser.add_argument("--max-new-usd", type=float, default=3, help="Maximum new charges in this run")
     parser.add_argument("--key-source", choices=["env", "pi"], default="env")
     parser.add_argument("--concurrency", type=int, default=8)
     parser.add_argument("--no-virtues", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--out", type=Path, default=Path("outputs") / (datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ") + "_labels"))
     args = parser.parse_args()
-    assert 0 < args.budget_usd <= 40 and args.concurrency > 0
+    assert 0 < args.budget_usd <= 70 and args.max_new_usd > 0 and args.concurrency > 0
     args.out.mkdir(parents=True, exist_ok=False)
     run_log = args.out / "run.md"
     logger.remove()
@@ -201,7 +207,10 @@ def main() -> None:
         if args.dry_run:
             payload = request(rows[0], next(key for key, text in rows[0]["choice_text"].items() if text), virtues=not args.no_virtues)
             (args.out / "example_request.json").write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
-            logger.info(f"## Result\n\nDry run: {len(payload['questions'])} questions per action, {actions} actions. No API calls. Example exact request: `{args.out / 'example_request.json'}`.\n\n{run_log}")
+            characters = sum(len(json.dumps(request(row, choice, virtues=not args.no_virtues), ensure_ascii=False)) for row in rows for choice in row["choice_text"])
+            estimate = {"api_calls": 0, "scenarios": len(rows), "actions": actions, "questions_per_action": len(payload["questions"]), "serialized_characters": characters, "central_usd": characters / 4 * .042 / 1_000_000, "high_usd": characters / 2 * .042 / 1_000_000, "method": "Serialized characters divided by4central or2high, at observed TypeSafe tariff; pilot refines this estimate."}
+            (args.out / "preflight.json").write_text(json.dumps(estimate, indent=2) + "\n")
+            logger.info("## Result\n\nDry run; no API calls.\n\n```json\n" + json.dumps(estimate, indent=2) + f"\n```\n\nExample exact request: `{args.out / 'example_request.json'}`.\n\n{run_log}")
             return
         (ROOT / ".local").mkdir(exist_ok=True)
         with (ROOT / ".local" / "labelling.lock").open("w") as lock:

@@ -49,21 +49,20 @@ def input_rows(path: Path | None = None) -> list[dict]:
     return [json.loads(line) for line in path.open()]
 
 
-def sample_by_game(rows: list[dict], per_game: int, seed: int) -> list[dict]:
-    rng = random.Random(seed)
-    games = defaultdict(list)
-    for row in rows:
-        games[row["game_id"]].append(row)
-    picked = {game: rng.sample(sorted(items, key=lambda r: r["source_id"]), min(per_game, len(items))) for game, items in sorted(games.items())}
-    return [picked[game][depth] for depth in range(per_game) for game in picked if depth < len(picked[game])]
-
-
 def select_rows(rows: list[dict], limit: int | None, seed: int) -> list[dict]:
     if limit is None:
         return rows
     assert limit > 0
-    games = len({row["game_id"] for row in rows})
-    return sample_by_game(rows, (limit + games - 1) // games, seed)[:limit]
+    source = rows[0]["source"]
+    assert all(row["source"] == source for row in rows), "Select one source per label run"
+    group_field = {"machiavelli": "game_id", "daily_dilemmas": "topic_group"}[source]
+    groups = defaultdict(list)
+    for row in rows:
+        groups[row[group_field]].append(row)
+    per_group = (limit + len(groups) - 1) // len(groups)
+    rng = random.Random(seed)
+    picked = {group: rng.sample(sorted(items, key=lambda r: r["source_id"]), min(per_group, len(items))) for group, items in sorted(groups.items())}
+    return [picked[group][depth] for depth in range(per_group) for group in picked if depth < len(picked[group])][:limit]
 
 
 def write_parquet(path: Path, rows: list[dict]) -> None:
