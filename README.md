@@ -15,8 +15,6 @@ In the labelled scenarios, every action has a score for 80 virtues and vices fro
 
 [Dataset](https://huggingface.co/datasets/wassname/virtue-choices) · [Code](https://github.com/wassname/virtue-choices)
 
-This is a local preview; the virtue labels are not published yet.
-
 ## Examples
 
 Each table first shows the directly judged virtue label whose scores differ most between that scene's choices. Then, from the labels that differ at least as much as the median label, it shows the two that rank the choices most differently from the first. The last columns come from the other label sets: for game scenes, the D&D alignment and the MACHIAVELLI behaviour label that differs most; for everyday dilemmas, DailyDilemmas' own values. All 80 virtue labels are in the data, and [the label list](https://github.com/wassname/virtue-choices/blob/main/docs/labels.md#all-80-labels) names them.
@@ -95,17 +93,13 @@ The model sees no labels or teachings. Its request starts with this system messa
 
 The [action-choice script](https://github.com/wassname/virtue-choices/blob/main/scripts/evaluation/action_choice.py) builds each request.
 
-## Load the local preview
-
-After staging the release (see [Reproduce](#reproduce)):
+## Load the data
 
 ```python
 import json
 from datasets import load_dataset
 
-data = load_dataset(
-    "parquet", data_files="outputs/virtue_release/parquet/train.parquet", split="train"
-)
+data = load_dataset("wassname/virtue-choices", split="train")
 row = next(row for row in data if row["has_virtue_labels"])
 print(row["text"])
 choices = json.loads(row["choice_text"])
@@ -153,19 +147,17 @@ Of the 80 labels, 66 are judged directly. The other 14 are vices paired with a v
 
 We labelled every DailyDilemmas scene, and 2,500 game scenes spread across the 92 games. Within each game we took the scenes whose actions differ most on the original MACHIAVELLI labels, so the game scenes are not a random sample.
 
-## Reproduce
+## Evaluate a model
 
-You do not need a GPU. Paid runs call models through OpenRouter, so set `OPENROUTER_API_KEY`. The commands below only estimate cost; they spend money only if you add `--allow-paid`, and then stop at a spending limit. Rebuilding the labels also needs the frozen teaching snapshot, which is not public yet.
+You do not need a GPU.
 
 ```sh
 uv sync --locked
-just offline-check                                        # no API calls
-just virtues --limit 20 --out outputs/virtue_preflight    # cost estimate; needs the snapshot
-just action-eval --inputs outputs/virtue_release/parquet/train.parquet \
-  --count 8 --out outputs/action_preflight                # cost estimate
+just data                                                  # download the dataset to data/processed
+just action-eval --count 8 --out outputs/eval_preflight    # cost estimate, no API calls
 ```
 
-The [justfile](justfile) has the steps that export, verify and stage a label run. Source versions are in `data/sources.json`.
+Add `--allow-paid` to run the evaluation. It calls models through OpenRouter, so set `OPENROUTER_API_KEY` first; it stops at a spending limit. Rebuilding the virtue labels needs the frozen teaching snapshot, which is not public yet; the [justfile](justfile) has those steps, and source versions are in `data/sources.json`.
 
 ## Citation and licences
 
