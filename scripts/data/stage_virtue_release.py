@@ -51,8 +51,33 @@ def check_visible(rows: list[dict], labels: dict, native: dict) -> None:
     assert visible_identity([sources[key] for key in labels]) == native["visible_inputs_sha256"], "Base prompts differ from the judged inputs"
 
 
-def stage(base: Path, run: Path, native_verification: Path, out: Path, *, dd_inputs: Path | None = None, dd_run: Path | None = None) -> dict:
+def checked_visible_labels(run: Path, inputs: Path, rows: list[dict]) -> tuple[dict, dict]:
+    proof = json.loads((run / "verification.json").read_text())
+    parquet = run / "parquet/train.parquet"
+    assert proof["status"] == "PASS" and proof["every_saved_score_matches_raw_response"]
+    assert proof["input_fields_preserved_in_exports"] and proof["original_annotations_unchanged"]
+    assert proof["inputs_sha256"] == hashlib.sha256(inputs.read_bytes()).hexdigest()
+    assert proof["parquet_sha256"] == hashlib.sha256(parquet.read_bytes()).hexdigest()
+    assert proof["scenarios"] == 1360 and proof["complete_actions"] == 2720
+    assert proof["rubric_version"] == "visible-action-values-v4"
+    assert proof["served_models"] == ["typesafe/jev-1.13-20260917"]
+    table = pq.read_table(parquet, columns=["source_id", "choice_labels_visible"])
+    labels = {row["source_id"]: json.loads(row["choice_labels_visible"]) for row in table.to_pylist()}
+    assert labels.keys() == {row["source_id"] for row in rows}
+    dimensions = set(json.loads((ROOT / "rubrics/actions.json").read_text())["dimensions"])
+    for row in rows:
+        assert labels[row["source_id"]].keys() == row["choice_text"].keys()
+        for label in labels[row["source_id"]].values():
+            assert set(label["visible_action_values"]) == dimensions
+            assert len(label["stoic_virtues_vices"]) == 8
+            assert set(label["dnd_action_alignment"]) == {"order", "morality"}
+    return labels, proof
+
+
+def stage(base: Path, run: Path, native_verification: Path, out: Path, *, dd_inputs: Path | None = None, dd_run: Path | None = None,
+          dd_visible_run: Path | None = None) -> dict:
     assert (dd_inputs is None) == (dd_run is None), "Supply both DailyDilemmas inputs and its complete labelled run"
+    assert dd_visible_run is None or dd_inputs is not None
     rubric = load_rubric()
     original = pq.read_table(base)
     assert original.num_rows == 10492 and original["source"].unique().to_pylist() == ["machiavelli"]
@@ -70,10 +95,15 @@ def stage(base: Path, run: Path, native_verification: Path, out: Path, *, dd_inp
     assert merged.select(original.column_names).equals(original), "Earlier source or label fields changed"
     source_licenses = {"machiavelli": "mit"}
     dd_rows = []
+    dd_visible = {}
+    dd_visible_proof = None
     if dd_inputs is not None:
         dd_rows = [json.loads(line) for line in dd_inputs.open()]
         assert len(dd_rows) == 1360 and len({row["source_id"] for row in dd_rows}) == 1360
         assert all(row["source"] == "daily_dilemmas" and row["source_license"] == "cc-by-4.0" for row in dd_rows)
+        assert all("choice_labels_visible" not in row for row in dd_rows), "Use original prepared inputs plus a verified visible-label run"
+        if dd_visible_run is not None:
+            dd_visible, dd_visible_proof = checked_visible_labels(dd_visible_run, dd_inputs, dd_rows)
         assert not set(source_ids) & {row["source_id"] for row in dd_rows}
         dd_labels, dd_priorities, dd_native = checked_overlay(dd_run, dd_run / "native_verification.json", rubric)
         assert len(dd_labels) == 1360 and sum(map(len, dd_labels.values())) == 2720, "Do not stage a partial DailyDilemmas run as complete"
@@ -93,6 +123,8 @@ def stage(base: Path, run: Path, native_verification: Path, out: Path, *, dd_inp
             for field in merged.column_names:
                 value = row[field] if field in row else None
                 converted[field] = json.dumps(value, ensure_ascii=False, separators=(",", ":")) if isinstance(value, (dict, list)) else value
+            if dd_visible_run is not None:
+                converted["choice_labels_visible"] = json.dumps(dd_visible[row["source_id"]], ensure_ascii=False, separators=(",", ":"))
             converted.update(world="DailyDilemmas", input_revision="daily-dilemmas-paired-actions-v1",
                 has_virtue_labels=True, choice_virtue_labels=json.dumps(dd_labels[row["source_id"]], ensure_ascii=False, separators=(",", ":")),
                 virtue_selection_priority=dd_priorities[row["source_id"]])
@@ -152,12 +184,14 @@ def stage(base: Path, run: Path, native_verification: Path, out: Path, *, dd_inp
     if dd_rows:
         for index, row in enumerate(dd_rows, original.num_rows):
             assert json.loads(dataset.data.column("source_annotations")[index].as_py()) == row["source_annotations"]
+            if dd_visible_run is not None:
+                assert json.loads(dataset.data.column("choice_labels_visible")[index].as_py()) == dd_visible[row["source_id"]]
     result = {"status": "PASS", "author": "PI/Sol", "scenes": len(source_ids), "source_counts": dict(source_counts),
               "virtue_labelled_scenes": len(labels), "virtue_labelled_choices": sum(map(len, labels.values())),
               "virtue_cells": sum(map(len, labels.values())) * 80, "source_licenses": source_licenses,
               "existing_fields_and_labels_unchanged": True, "all_source_ids_and_choices_preserved": True,
               "all_selected_scene_choices_labelled": True, "unlabelled_choice_virtue_labels": {},
-              "daily_dilemmas_annotations_preserved": bool(dd_rows), "hf_local_parquet_load": "PASS", "card_config_parse": "PASS",
+              "daily_dilemmas_annotations_preserved": bool(dd_rows), "daily_dilemmas_visible_labels": len(dd_visible), "hf_local_parquet_load": "PASS", "card_config_parse": "PASS",
               "known_review_flagged_scenes": len(reviews), "unreviewed_scenes": len(source_ids) - len(reviews),
               "review_status_semantics": "An empty flag list with unreviewed means no recorded review, not validation.",
               "rubric_version": rubric["version"], "tiny_virtues_commit": rubric["source"]["commit"],
@@ -169,6 +203,9 @@ def stage(base: Path, run: Path, native_verification: Path, out: Path, *, dd_inp
     (checks / "virtues_v2.json").write_text(json.dumps(result, indent=2) + "\n")
     shutil.copyfile(ROOT / "data/sources.json", checks / "sources.json")
     shutil.copyfile(review_path, checks / "scenario_reviews.json")
+    if dd_visible_proof is not None:
+        public_proof = {key: dd_visible_proof[key] for key in ("status", "scenarios", "complete_actions", "labels_sha256", "parquet_sha256", "inputs_sha256", "rubric_version", "served_models", "feedback_counts", "every_saved_score_matches_raw_response", "parquet_source_fields_preserved")}
+        (checks / "daily_dilemmas_visible_labels.json").write_text(json.dumps(public_proof, indent=2) + "\n")
     (out / "staging_verification.json").write_text(json.dumps(result, indent=2) + "\n")
     return result
 
@@ -180,6 +217,7 @@ if __name__ == "__main__":
     parser.add_argument("--native-verification", type=Path, required=True)
     parser.add_argument("--dd-inputs", type=Path)
     parser.add_argument("--dd-run", type=Path)
+    parser.add_argument("--dd-visible-run", type=Path, help="Verified DailyDilemmas behaviour, Stoic and D&D label run")
     parser.add_argument("--out", type=Path, required=True)
     args = parser.parse_args()
-    print(json.dumps(stage(args.base, args.run, args.native_verification, args.out, dd_inputs=args.dd_inputs, dd_run=args.dd_run), indent=2))
+    print(json.dumps(stage(args.base, args.run, args.native_verification, args.out, dd_inputs=args.dd_inputs, dd_run=args.dd_run, dd_visible_run=args.dd_visible_run), indent=2))
