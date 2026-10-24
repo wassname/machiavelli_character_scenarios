@@ -1,6 +1,7 @@
 """Unpaid blinding, option mapping and parser regressions. -- PI/Sol"""
 
 import asyncio
+import base64
 import copy
 import json
 import os
@@ -13,7 +14,7 @@ import httpx
 import pyarrow.parquet as pq
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "evaluation"))
-from action_choice import MODEL_PATH, ROOT, build_packet, embedded_overlay, parse_receipt, render, select_scenes, scene_spread
+from action_choice import MODEL_PATH, ROOT, build_packet, embedded_overlay, parse_receipt, render, select_scenes, scene_spread, build_scope_packet
 from score_action_choice import uniform_baseline, cluster_interval, paired_summary
 import eval_api
 from eval_api import api_key, transient_provider_error
@@ -44,6 +45,19 @@ def main() -> None:
     record = {"metadata": reverse["metadata"], "request_key": "offline", "cache_hit": True, "http_status": 200, "response": response}
     parsed = parse_receipt(record, config)
     assert parsed["status"] == "ok" and parsed["original_choice_id"] == reverse["metadata"]["displayed_to_original"]["0"]
+    scope = build_scope_packet(row, model, config)
+    assert build_scope_packet(contaminated, model, config) == scope
+    generic_scope = build_scope_packet(row | {"player_character": "You"}, model, config)
+    assert "generic dataset placeholder" in generic_scope["request"]["messages"][1]["content"]
+    assert "Decision-maker: You" not in generic_scope["request"]["messages"][1]["content"]
+    scope_record = copy.deepcopy(record) | {"metadata": scope["metadata"], "request": scope["request"]}
+    scope_answer = {"kind": "action_selection", "meanings_match_question": True,
+                    "evidence_quote": next(iter(row["choice_text"].values())), "explanation": "The character chooses an act.", "setup_note": ""}
+    scope_record["response"]["choices"][0]["message"]["content"] = json.dumps(scope_answer)
+    assert parse_receipt(scope_record, config)["status"] == "ok"
+    scope_answer["evidence_quote"] = "INVENTED SOURCE QUOTE"
+    scope_record["response"]["choices"][0]["message"]["content"] = json.dumps(scope_answer)
+    assert parse_receipt(scope_record, config)["status"] == "evidence_mismatch"
     length = copy.deepcopy(record)
     length["response"]["choices"][0]["finish_reason"] = "length"
     assert parse_receipt(length, config)["status"] == "length_error"
@@ -116,7 +130,56 @@ def main() -> None:
             assert len(network_calls) == 1 and result["cache_hits"] == 1 and result["new_cost_usd"] == .001
             eval_api.reserve_unknown_fee({"request_key": "offline", "time": "one", "attempt": 0}, out)
             assert unknown_fees(root, eval_api.SCOPE) == eval_api.RESERVATION
-    print("PASS: Pareto-frontier tradeoffs, joint opportunity normalization including zero opportunity, concurrent exact-request cache and unknown-fee reserves; embedded labels match the original overlay and requests; caller environment key needs no Pi credentials; hidden labels excluded; reverse IDs map correctly; errors stay separate; uniform-null controls hold. No API calls. -- PI/Sol and PI/OpenAI")
+    async def check_model_fairness():
+        ready = asyncio.Event()
+        async def respond_fair(request):
+            name = json.loads(request.content)["model"]
+            if name == "slow-model":
+                await ready.wait()
+            else:
+                ready.set()
+            return httpx.Response(200, json={"id": name, "model": name, "usage": {"cost": .001}, "choices": []})
+        slow = copy.deepcopy(forward)
+        slow["request"]["model"] = "slow-model"
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            out = root / "out"
+            out.mkdir()
+            with patch.object(eval_api, "ROOT", root), patch.object(eval_api, "api_key", return_value="offline"), patch.object(eval_api.httpx, "AsyncClient", side_effect=lambda **kwargs: client(transport=httpx.MockTransport(respond_fair), **kwargs)):
+                result = await asyncio.wait_for(eval_api.run_requests([slow, slow, forward], out, max_new_usd=.1, concurrency=2), timeout=2)
+                assert result["completed"] == 3 and result["new_requests"] == 2
+    asyncio.run(check_model_fairness())
+    async def check_transport_recovery():
+        class PartialTimeout(httpx.AsyncByteStream):
+            async def __aiter__(self):
+                yield b'{"partial":'
+                raise httpx.ReadTimeout("offline body timeout")
+        for persistent in (False, True):
+            attempts = []
+            async def respond_transport(request):
+                attempts.append(request)
+                if persistent or len(attempts) == 1:
+                    return httpx.Response(200, headers={"x-generation-id": f"partial-{len(attempts)}"}, stream=PartialTimeout())
+                return httpx.Response(200, json=response | {"id": "recovered", "usage": {"cost": .001}})
+            with tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                out = root / "out"
+                out.mkdir()
+                with patch.object(eval_api, "ROOT", root), patch.object(eval_api, "api_key", return_value="offline"), patch.object(eval_api.httpx, "AsyncClient", side_effect=lambda **kwargs: client(transport=httpx.MockTransport(respond_transport), **kwargs)):
+                    result = await eval_api.run_requests([forward], out, max_new_usd=.1, concurrency=1)
+                    receipt = json.loads((out / "receipts.jsonl").read_text())
+                    events = [json.loads(line) for line in (out / "events.jsonl").open()]
+                    assert base64.b64decode(events[0]["partial_body_base64"]) == b'{"partial":'
+                    assert events[0]["response_headers"]["x-generation-id"] == "partial-1"
+                    if persistent:
+                        assert len(attempts) == 4 and parse_receipt(receipt, config)["status"] == "infrastructure_error"
+                        assert result["new_cost_usd"] == 0 and abs(unknown_fees(root) - .04) < 1e-12
+                        assert not list((root / "data/interim/action_choice_cache").glob("*.gz"))
+                    else:
+                        assert len(attempts) == 2 and parse_receipt(receipt, config)["status"] == "ok"
+                        assert result["new_cost_usd"] == .001 and unknown_fees(root) == .01
+    asyncio.run(check_transport_recovery())
+    print("PASS: bounded transport recovery preserves partial bytes, headers and uncertain fees; exhausted attempts stay missing and uncached; model-queue isolation prevents a stalled endpoint starving another model; Pareto-frontier tradeoffs, joint opportunity normalization including zero opportunity, concurrent exact-request cache and unknown-fee reserves; embedded labels match the original overlay and requests; caller environment key needs no Pi credentials; hidden labels excluded; reverse IDs map correctly; errors stay separate; uniform-null controls hold. No API calls. -- PI/Sol and PI/OpenAI")
 
 
 if __name__ == "__main__":

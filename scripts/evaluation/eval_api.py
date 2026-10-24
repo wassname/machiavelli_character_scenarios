@@ -1,6 +1,7 @@
 """Exact-request chat cache and one shared capped evaluation ledger scope. -- PI/Sol"""
 
 import asyncio
+import base64
 from collections import Counter
 from datetime import datetime, timezone
 import gzip
@@ -36,10 +37,14 @@ def transient_provider_error(body: dict) -> bool:
 def reserve_unknown_fee(event: dict, out: Path) -> None:
     path = ROOT / ".local/billing_reservations.json"
     rows = json.loads(path.read_text()) if path.exists() else []
-    rows.append({"request_key": digest({"payload_key": event["request_key"], "time": event["time"]}),
-                 "payload_request_key": event["request_key"], "scope": SCOPE,
-                 "reserved_usd": RESERVATION, "run": str(out), "attempt": event["attempt"],
-                 "reason": "Request may have been billed; no charge receipt returned"})
+    reservation = {"request_key": digest({"payload_key": event["request_key"], "time": event["time"]}),
+                   "payload_request_key": event["request_key"], "scope": SCOPE,
+                   "reserved_usd": RESERVATION, "run": str(out), "attempt": event["attempt"],
+                   "reason": "Request may have been billed; no charge receipt returned"}
+    headers = event.get("response_headers", {})
+    if "x-generation-id" in headers:
+        reservation["response_id"] = headers["x-generation-id"]
+    rows.append(reservation)
     path.write_text(json.dumps(rows, indent=2) + "\n")
 
 
@@ -53,7 +58,11 @@ async def run_requests(packets: list[dict], out: Path, *, max_new_usd: float, co
     new = reserved = 0.0
     counts = Counter()
     stopping = False
-    work = iter(packets)
+    by_model: dict[str, list[dict]] = {}
+    for packet in packets:
+        by_model.setdefault(packet["request"]["model"], []).append(packet)
+    work = {model: iter(rows) for model, rows in by_model.items()}
+    capacity = asyncio.Semaphore(concurrency)
     request_locks: dict[str, asyncio.Lock] = {}
     model_start_locks: dict[str, asyncio.Lock] = {}
     model_next_start: dict[str, float] = {}
@@ -64,9 +73,9 @@ async def run_requests(packets: list[dict], out: Path, *, max_new_usd: float, co
                "X-OpenRouter-Title": "virtue-choices/action-choice-eval"}
     async with httpx.AsyncClient(headers=headers, timeout=180) as client:
         with (out / "receipts.jsonl").open("w") as receipts:
-            async def worker():
+            async def worker(model_work):
                 nonlocal new, reserved
-                for packet in work:
+                for packet in model_work:
                     if stopping:
                         return
                     payload = packet["request"]
@@ -98,22 +107,42 @@ async def run_requests(packets: list[dict], out: Path, *, max_new_usd: float, co
                                     event = {"time": datetime.now(timezone.utc).isoformat(), "request_key": key,
                                              "metadata": packet["metadata"], "attempt": attempt, "request": payload}
                                     counts["http_attempts"] += 1
+                                    chunks = []
                                     try:
-                                        response = await client.post("https://openrouter.ai/api/v1/chat/completions", json=payload)
+                                        async with capacity:
+                                            async with client.stream("POST", "https://openrouter.ai/api/v1/chat/completions", json=payload) as response:
+                                                event |= {"http_status": response.status_code, "response_headers": dict(response.headers)}
+                                                async for chunk in response.aiter_bytes():
+                                                    chunks.append(chunk)
                                     except httpx.TransportError as error:
-                                        event["error"] = repr(error)
-                                        if not isinstance(error, (httpx.ConnectError, httpx.ConnectTimeout)):
+                                        event |= {"error": repr(error), "partial_body_base64": base64.b64encode(b"".join(chunks)).decode("ascii")}
+                                        if not isinstance(error, (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout)):
                                             reserve_unknown_fee(event, out)
                                         with (out / "events.jsonl").open("a") as stream:
                                             stream.write(json.dumps(event, ensure_ascii=False) + "\n")
+                                        if attempt < 3:
+                                            await asyncio.sleep(2 ** attempt)
+                                            continue
+                                        record = {"request_key": key, "request": payload, "http_status": None,
+                                                  "response_origin": "transport_failure", "response": {"transport_error": repr(error), "attempts": attempt + 1}}
+                                        counts["new_requests"] += 1
+                                        counts["exhausted_transport_errors"] += 1
+                                        break
+                                    raw_body = b"".join(chunks)
+                                    try:
+                                        event["response_text"] = raw_body.decode("utf-8")
+                                    except UnicodeDecodeError as error:
+                                        event |= {"error": repr(error), "response_body_base64": base64.b64encode(raw_body).decode("ascii")}
+                                        reserve_unknown_fee(event, out)
+                                        with (out / "events.jsonl").open("a") as stream:
+                                            stream.write(json.dumps(event, ensure_ascii=False) + "\n")
                                         raise
-                                    event |= {"http_status": response.status_code, "response_headers": dict(response.headers), "response_text": response.text}
                                     with (out / "events.jsonl").open("a") as stream:
                                         stream.write(json.dumps(event, ensure_ascii=False) + "\n")
                                     if response.status_code == 200 or response.headers.get("content-type", "").startswith("application/json"):
-                                        body = response.json()
+                                        body = json.loads(event["response_text"])
                                     else:
-                                        body = {"error": {"message": response.text}}
+                                        body = {"error": {"message": event["response_text"]}}
                                     if "usage" in body and "cost" in body["usage"]:
                                         charge = body["usage"]["cost"]
                                         assert type(charge) in (int, float) and math.isfinite(charge) and charge >= 0
@@ -151,7 +180,8 @@ async def run_requests(packets: list[dict], out: Path, *, max_new_usd: float, co
                             logger.debug("## First complete request/reply\n\n```json\n" + json.dumps(record, ensure_ascii=False, indent=2) + "\n```\n")
                         if counts["completed"] % 100 == 0:
                             logger.info(f"Completed {counts['completed']}/{len(packets)} requests; new cost ${new:.5f}; cumulative ${project_before + new:.5f}.")
-            tasks = [asyncio.create_task(worker()) for _ in range(concurrency)]
+            workers_per_model = max(1, concurrency // len(work))
+            tasks = [asyncio.create_task(worker(model_work)) for model_work in work.values() for _ in range(workers_per_model)]
             try:
                 await asyncio.gather(*tasks)
             except BaseException:

@@ -12,6 +12,8 @@ import random
 import pyarrow.parquet as pq
 from tabulate import tabulate
 
+from action_choice import SCOPE_PROTOCOL
+
 
 def uniform_baseline(values: dict[str, list[float]]) -> list[float]:
     assert values and len({len(vector) for vector in values.values()}) == 1
@@ -74,7 +76,8 @@ def paired_summary(vectors: dict, scenes: dict, identities: set, weights: dict, 
     return point, intervals
 
 
-def score(run: Path, virtues: Path, *, replicates: int = 1000) -> dict:
+def score(run: Path, virtues: Path, *, replicates: int = 1000, source_audit_path: Path | None = None) -> dict:
+    (run / "scoring_source.py").write_bytes(Path(__file__).read_bytes())
     manifest = json.loads((run / "manifest.json").read_text())
     assert manifest["virtue_table_sha256"] == hashlib.sha256(virtues.read_bytes()).hexdigest(), "Changed virtue-table identity"
     scenes = {row["source_id"]: row for row in map(json.loads, (run / "scenes.jsonl").open())}
@@ -84,7 +87,9 @@ def score(run: Path, virtues: Path, *, replicates: int = 1000) -> dict:
         key = record["source_id"], record["model"], record["order"]
         assert key not in predictions
         predictions[key] = record
-    assert set(predictions) == {(source_id, model, order) for source_id in scenes for model in models for order in ("forward", "reverse")}, "Missing or extra model/order reply"
+    planned = {model: set(manifest["model_source_ids"][model]) for model in models} if "model_source_ids" in manifest else {model: set(scenes) for model in models}
+    assert all(ids and ids <= set(scenes) for ids in planned.values())
+    assert set(predictions) == {(source_id, model, order) for model in models for source_id in planned[model] for order in ("forward", "reverse")}, "Missing or extra planned model/order reply"
     raw = {(row["source_id"], row["choice_id"]): row["virtues"] for row in pq.read_table(virtues).to_pylist() if row["source_id"] in scenes}
     first = next(iter(raw.values()))
     items = sorted(first)
@@ -96,11 +101,11 @@ def score(run: Path, virtues: Path, *, replicates: int = 1000) -> dict:
     complete = {}
     for model in models:
         records = [record for key, record in predictions.items() if key[1] == model]
-        complete[model] = {source_id for source_id in scenes if all(predictions[source_id, model, order]["status"] == "ok" for order in ("forward", "reverse"))}
+        complete[model] = {source_id for source_id in planned[model] if all(predictions[source_id, model, order]["status"] == "ok" for order in ("forward", "reverse"))}
         disagreements = sum(predictions[source_id, model, "forward"]["original_choice_id"] != predictions[source_id, model, "reverse"]["original_choice_id"] for source_id in complete[model])
-        coverage[model] = {"planned_scenes": len(scenes), "planned_replies": len(scenes) * 2,
+        coverage[model] = {"planned_scenes": len(planned[model]), "planned_replies": len(planned[model]) * 2,
             "reply_status_counts": dict(Counter(record["status"] for record in records)),
-            "scenes_with_any_non_ok_reply": len(scenes) - len(complete[model]),
+            "scenes_with_any_non_ok_reply": len(planned[model]) - len(complete[model]),
             "both_orders_valid_scenes": len(complete[model]), "order_disagreements": disagreements,
             "order_disagreement_rate": disagreements / len(complete[model]) if complete[model] else None,
             "nonempty_unscored_setup_notes": sum(record["status"] == "ok" and bool(record["setup_note"]) for record in records)}
@@ -145,14 +150,43 @@ def score(run: Path, virtues: Path, *, replicates: int = 1000) -> dict:
         strata = json.loads((run / "label_only_strata.json").read_text())["sources"]
         sources = sorted(manifest["source_counts"])
         width = len(traditions)
+        source_audit = source_audit_path if source_audit_path is not None else run / "source_scope.jsonl"
+        screened = None
+        if source_audit.exists():
+            audits = [json.loads(line) for line in source_audit.open()]
+            if audits:
+                assert len(audits) == len(scenes) and {row["source_id"] for row in audits} == set(scenes), "Incomplete source-only audit cohort"
+                audit_manifest = json.loads((source_audit.parent / "manifest.json").read_text())
+                assert audit_manifest["scene_table_sha256"] == manifest["scene_table_sha256"], "Source audit belongs to a different input table"
+                screening_enabled = audit_manifest.get("source_audit_protocol") == SCOPE_PROTOCOL
+                candidates = {row["source_id"] for row in audits if row["status"] == "ok" and row["kind"] == "action_selection" and row["meanings_match_question"] is True}
+                screened = candidates if screening_enabled else None
+                (run / "source_scope_summary.json").write_text(json.dumps({
+                    "audit_path": str(source_audit), "audit_protocol": audit_manifest.get("source_audit_protocol"),
+                    "screening_cohorts_enabled": screening_enabled,
+                    "protocol_note": "Legacy literal 'Decision-maker: You' rendering can misclassify ordinary third-person vignettes as other_actor; do not use it to select a validity cohort.",
+                    "status_counts": dict(Counter(row["status"] for row in audits)),
+                    "kind_counts": dict(Counter(row["kind"] for row in audits if row["status"] == "ok")),
+                    "literal_action_screened_scenes": len(candidates),
+                    "limits": "Model-generated source-only screening, not ground-truth validity or a repair of labels. Sensitivity cohorts only; primary all-source results unchanged. Intervals exclude classifier uncertainty."}, indent=2) + "\n")
         for model_a, model_b in combinations(models, 2):
             shared = complete[model_a] & complete[model_b]
             stable = {key for key in shared if all(predictions[key, model, "forward"]["original_choice_id"] == predictions[key, model, "reverse"]["original_choice_id"] for model in (model_a, model_b))}
-            pair_coverage.append({"model_a": model_a, "model_b": model_b, "planned_scenes": len(scenes),
+            pair_coverage.append({"model_a": model_a, "model_b": model_b, "planned_scenes": len(planned[model_a] & planned[model_b]),
                 "complete_scenes": len(shared), "both_models_order_stable_scenes": len(stable),
                 "different_actions_both_order_stable": sum(predictions[key, model_a, "forward"]["original_choice_id"] != predictions[key, model_b, "forward"]["original_choice_id"] for key in stable),
                 "different_actions_matched_views": sum(predictions[key, model_a, order]["original_choice_id"] != predictions[key, model_b, order]["original_choice_id"] for key in shared for order in ("forward", "reverse")),
                 "matched_views": 2 * len(shared)})
+            source_coverage = {}
+            for source in sources:
+                ids = {key for key in shared if scenes[key]["source"] == source}
+                stable_ids = ids & stable
+                source_coverage[source] = {"planned_scenes": sum(scenes[key]["source"] == source for key in planned[model_a] & planned[model_b]),
+                    "complete_scenes": len(ids), "matched_views": 2 * len(ids),
+                    "different_actions_matched_views": sum(predictions[key, model_a, order]["original_choice_id"] != predictions[key, model_b, order]["original_choice_id"] for key in ids for order in ("forward", "reverse")),
+                    "both_models_order_stable_scenes": len(stable_ids),
+                    "different_actions_both_order_stable": sum(predictions[key, model_a, "forward"]["original_choice_id"] != predictions[key, model_b, "forward"]["original_choice_id"] for key in stable_ids)}
+            pair_coverage[-1]["by_source"] = source_coverage
             differences = {}
             for source_id in sorted(shared):
                 a, b = (model_vectors[model][source_id][len(items):] for model in (model_a, model_b))
@@ -169,6 +203,9 @@ def score(run: Path, virtues: Path, *, replicates: int = 1000) -> dict:
             cohorts["equal_sources"] = shared
             for metric in ("action_label_spread", "tradition_tradeoff_spread"):
                 cohorts[metric] = shared & {key for source in sources for key in strata[source][metric]}
+            if screened is not None:
+                cohorts["source_screened"] = shared & screened
+                cohorts["source_screened_tradeoff"] = cohorts["tradition_tradeoff_spread"] & screened
             for name, identities in cohorts.items():
                 if not identities:
                     pair_coverage[-1].setdefault("unavailable_cohorts", []).append(name)
@@ -191,7 +228,7 @@ def score(run: Path, virtues: Path, *, replicates: int = 1000) -> dict:
             (run / filename).write_text("".join(json.dumps(row) + "\n" for row in rows))
         (run / "pair_coverage.json").write_text(json.dumps(pair_coverage, indent=2) + "\n")
         table = tabulate([[r["model_a"], r["model_b"], r["cohort"], r["tradition"], f"{r['mean_a_minus_b']:+.4f}", f"[{r['ci95_low']:+.4f}, {r['ci95_high']:+.4f}]", r["scenes"]] for r in paired_rows], headers=["A", "B", "cohort", "tradition", "A−B", "95% grouped interval", "scenes"], tablefmt="pipe", disable_numparse=True)
-        (run / "paired_differences.md").write_text("# Paired action-label differences\n\n-- PI/OpenAI\n\nEach pair uses its own complete two-order scenes. Sources have equal weight in combined cohorts. Positive is not a quality ranking. High-change strata depend only on labels.\n\n" + table + "\n\nIntervals resample games/topics within source; they exclude label uncertainty and generation variance. Opportunity-normalized estimates and joint intervals are in paired_differences.jsonl.\n")
+        (run / "paired_differences.md").write_text("# Paired action-label differences\n\n-- PI/OpenAI\n\nEach pair uses its own complete two-order scenes. Sources have equal weight in combined cohorts. Positive is not a quality ranking. High-change strata depend only on labels.\n\n" + table + "\n\nIntervals resample games/topics within source; they exclude label uncertainty, classifier uncertainty and generation variance. Opportunity-normalized estimates and joint intervals are in paired_differences.jsonl.\n")
     position_controls = []
     control_cohorts = [("all_planned", set(scenes))] + ([("paired_complete", paired)] if paired else [])
     for cohort, identities in control_cohorts:
@@ -224,7 +261,7 @@ def score(run: Path, virtues: Path, *, replicates: int = 1000) -> dict:
         "limits": "Conditional on the high-contrast labelled subset and its uncalibrated judge estimates. Intervals do not include label uncertainty or model sampling variance. Coverage/refusals/errors remain measured against all planned scenes. No overall moral ranking."}
     (run / "score_summary.json").write_text(json.dumps(result, indent=2) + "\n")
     table = tabulate([[row["tradition"], row["model"], f"{row['delta_from_uniform']:+.3f}", f"[{row['ci95_low']:+.3f}, {row['ci95_high']:+.3f}]", f"{row['displayed_first_control_delta']:+.3f}", row["independent_items"]] for row in per_tradition], headers=["tradition", "model", "relative to uniform", "95% game-bootstrap interval", "displayed-first control", "direct items"], tablefmt="pipe", disable_numparse=True)
-    (run / "scores.md").write_text("# Chosen actions relative to uniform choice\n\n-- PI/Sol\n\n" + table + "\n\n" + result["paired_complete_definition"] + " " + result["limits"] + "\n\nDetailed sources: per_virtue.jsonl, per_tradition.jsonl, choices.jsonl and receipts.jsonl in this directory.\n")
+    (run / "scores.md").write_text("# Action-preference results\n\n-- PI/Sol and PI/OpenAI\n\nPrimary comparisons: paired_differences.md and paired_differences.jsonl use each model pair's own complete cohort. pair_coverage.json gives source-specific action disagreement and coverage. source_scope_summary.json describes optional source-only screening.\n\n## Common all-model subset (secondary)\n\n" + table + "\n\n" + result["paired_complete_definition"] + " " + result["limits"] + "\n\nDetailed sources: per_virtue.jsonl, per_tradition.jsonl, choices.jsonl and receipts.jsonl in this directory.\n")
     return result
 
 
@@ -238,5 +275,6 @@ if __name__ == "__main__":
     parser.add_argument("run", type=Path)
     parser.add_argument("--virtues", type=Path, required=True)
     parser.add_argument("--bootstrap", type=int, default=1000)
+    parser.add_argument("--source-audit", type=Path, help="Source-only audit from a separately verified render protocol")
     args = parser.parse_args()
-    print(json.dumps(score(args.run, args.virtues, replicates=args.bootstrap), indent=2))
+    print(json.dumps(score(args.run, args.virtues, replicates=args.bootstrap, source_audit_path=args.source_audit), indent=2))
