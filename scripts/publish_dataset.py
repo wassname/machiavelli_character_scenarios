@@ -1,86 +1,94 @@
-"""Bundle checked data and publish one atomic Hugging Face update. PI/OpenAI."""
+"""Verify the curated release directory and atomically publish it to Hugging Face. -- PI/OpenAI"""
 
 import argparse
+from collections import Counter
 import hashlib
 import json
-import shutil
 from pathlib import Path
+import re
+import subprocess
 
-from huggingface_hub import CommitOperationAdd, HfApi
+from huggingface_hub import CommitOperationAdd, CommitOperationDelete, HfApi
+import pyarrow.parquet as pq
 
-import sys
-sys.path.insert(0, str(Path(__file__).resolve().parent / "data"))
-
-from dataset_io import SOURCES, ROOT
-from prepare_inputs import INPUT_REVISION
-
+ROOT = Path(__file__).resolve().parents[1]
 REPO = "wassname/virtue-choices"
-CODE = "https://github.com/wassname/virtue-choices"
+CORE_FILES = {
+    "README.md", "CITATION.cff", "parquet/train.parquet", "staging_verification.json",
+    "checks/virtues_v2.json", "checks/sources.json", "checks/scenario_reviews.json",
+    "examples/visible_actions_v4_jev_1_13_request.json",
+}
+EARLIER_CHECKS = {
+    "checks/budget.json", "checks/category_samples.jsonl", "checks/feedback_summary.json",
+    "checks/input_repairs.json", "checks/negative_checks.json", "checks/verification.json",
+}
 
 
-def dataset_card() -> str:
-    return "---\n" + (ROOT / "dataset_metadata.yaml").read_text().strip() + "\n---\n\n" + (ROOT / "README.md").read_text()
+def verify(staged: Path) -> dict:
+    card = (staged / "README.md").read_text()
+    expected_card = "---\n" + (ROOT / "dataset_metadata.yaml").read_text().strip() + "\n---\n\n" + (ROOT / "README.md").read_text()
+    assert card == expected_card, "Staged card differs from the approved README and metadata"
+    assert (staged / "CITATION.cff").read_bytes() == (ROOT / "CITATION.cff").read_bytes()
+    images = set(re.findall(r"!\[[^\]]*\]\((docs/figures/[^)]+)\)", card))
+    expected = CORE_FILES | images
+    actual = {str(p.relative_to(staged)) for p in staged.rglob("*") if p.is_file()}
+    assert actual - {"release.json"} == expected, f"Release file allowlist differs: {actual ^ expected}"
+    proof = json.loads((staged / "staging_verification.json").read_text())
+    assert proof["status"] == "PASS" and proof["existing_fields_and_labels_unchanged"]
+    assert proof["all_source_ids_and_choices_preserved"] and proof["all_selected_scene_choices_labelled"]
+    assert proof["daily_dilemmas_annotations_preserved"] and not proof["full_teachings_or_native_traces_in_bundle"]
+    parquet = staged / "parquet/train.parquet"
+    assert hashlib.sha256(parquet.read_bytes()).hexdigest() == proof["parquet_sha256"]
+    rows = pq.read_table(parquet, columns=["source", "has_virtue_labels", "choice_text"]).to_pylist()
+    assert len(rows) == proof["scenes"] == 11852
+    assert Counter(r["source"] for r in rows) == proof["source_counts"] == {"machiavelli": 10492, "daily_dilemmas": 1360}
+    assert sum(r["has_virtue_labels"] for r in rows) == proof["virtue_labelled_scenes"] == 3860
+    choices = sum(len(json.loads(r["choice_text"])) for r in rows)
+    assert choices == 39896
+    assert sum(len(json.loads(r["choice_text"])) for r in rows if r["has_virtue_labels"]) == proof["virtue_labelled_choices"] == 11443
+    for relative in expected:
+        path = staged / relative
+        assert not path.is_symlink()
+        if path.suffix in {".md", ".json", ".cff"}:
+            text = path.read_text()
+            assert not any(marker in text for marker in ("/workspace/", "/home/code/", "sk-or-", "Bearer ")), relative
+    files = {name: hashlib.sha256((staged / name).read_bytes()).hexdigest() for name in sorted(expected)}
+    release = {"version": "2.0.0", "dataset": REPO, "code": "https://github.com/" + REPO,
+               "code_commit": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip(),
+               "scenarios": len(rows), "choices": choices, "virtue_labelled_scenes": 3860,
+               "virtue_labelled_choices": proof["virtue_labelled_choices"], "source_counts": proof["source_counts"],
+               "rubric_version": proof["rubric_version"], "files_sha256": files,
+               "validation": proof["validation_scope"]}
+    (staged / "release.json").write_text(json.dumps(release, indent=2) + "\n")
+    return release
 
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--run", type=Path, required=True)
-    parser.add_argument("--prepared", type=Path, required=True)
-    parser.add_argument("--feedback", type=Path, required=True)
-    parser.add_argument("--negative-checks", type=Path, required=True)
-    parser.add_argument("--out", type=Path, required=True)
+    parser.add_argument("--staged", type=Path, required=True)
     parser.add_argument("--publish", action="store_true")
-    parser.add_argument("--expected-parent", default=SOURCES["original_prompts"]["revision"])
+    parser.add_argument("--expected-parent")
     args = parser.parse_args()
-    verified = json.loads((args.run / "verification.json").read_text())
-    prepared = json.loads((args.prepared / "summary.json").read_text())
-    feedback = json.loads((args.feedback / "summary.json").read_text())
-    negatives = json.loads(args.negative_checks.read_text())
-    metadata = json.loads((args.run / "metadata.json").read_text())
-    assert verified["status"] == "PASS" and not verified["raw_http_or_transport_errors"]
-    for key in ("input_fields_preserved_in_exports", "original_annotations_unchanged", "original_prompts_retained", "only_visible_prompt_and_choice_sent", "every_saved_score_matches_raw_response", "complete_configured_questions_checked", "parquet_source_fields_preserved"):
-        assert verified[key], key
-    assert verified["input_revision"] == prepared["input_revision"] == INPUT_REVISION
-    assert prepared["inputs_sha256"] == metadata["config"]["inputs_sha256"]
-    assert verified["scenarios"] == prepared["scenarios"] == feedback["scenarios"] == 10492
-    assert verified["complete_actions"] == prepared["actions"] == feedback["actions_read"]
-    assert verified["feedback_counts"] == feedback["selected_word_counts"]
-    assert feedback["labels_sha256"] == hashlib.sha256((args.run / "labels.jsonl").read_bytes()).hexdigest()
-    assert negatives["all_real_inputs_pass"]
-    assert all(negatives[key] == "rejected" for key in ("removed_displayed_option", "altered_upstream_annotations", "missing_behaviour_question", "missing_stoic_questions"))
-    assert negatives["in_world_undo_dialogue"] == negatives["stale_undo_history"] == "not_rewritten"
-    assert negatives["interface_repair_rows"] == prepared["interface_context_repaired_rows"]
-    assert verified["project_total_usd_at_verification"] <= 40
-    args.out.mkdir(parents=True, exist_ok=False)
-    files = {
-        "CITATION.cff": ROOT / "CITATION.cff",
-        "parquet/train.parquet": args.run / "parquet/train.parquet",
-        "checks/verification.json": args.run / "verification.json",
-        "checks/input_repairs.json": args.prepared / "summary.json",
-        "checks/feedback_summary.json": args.feedback / "summary.json",
-        "checks/category_samples.jsonl": args.feedback / "category_samples.jsonl",
-        "checks/negative_checks.json": args.negative_checks,
-    }
-    hashes = {}
-    for relative, source in files.items():
-        target = args.out / relative
-        target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(source, target)
-        hashes[relative] = hashlib.sha256(target.read_bytes()).hexdigest()
-    card = args.out / "README.md"
-    card.write_text(dataset_card())
-    hashes["README.md"] = hashlib.sha256(card.read_bytes()).hexdigest()
-    release = {"version": "1.0.0", "dataset": REPO, "code": CODE, "input_revision": INPUT_REVISION, "rubric_version": metadata["config"]["rubric_version"], "model": metadata["config"]["model"], "scenarios": verified["scenarios"], "choices": verified["complete_actions"], "changed_prompt_rows": prepared["changed_prompt_rows"], "restored_choices": prepared["restored_choices"], "input_sha256": prepared["inputs_sha256"], "files_sha256": hashes, "code_files_sha256": {str(path.relative_to(ROOT)): hashlib.sha256(path.read_bytes()).hexdigest() for path in sorted((ROOT / "scripts").rglob("*.py"))}, "validation": "Artifact integrity and source/receipt checks, not semantic accuracy or calibration.", "project_inference_usd": verified["project_total_usd_at_verification"], "local_generation_commit": metadata["commit"]}
-    (args.out / "release.json").write_text(json.dumps(release, indent=2) + "\n")
+    release = verify(args.staged)
     print(json.dumps(release, indent=2))
-    if args.publish:
-        api = HfApi()
-        assert api.dataset_info(REPO).sha == args.expected_parent, "HF changed since preparation; inspect before publishing"
-        operations = [CommitOperationAdd(path_in_repo=str(path.relative_to(args.out)), path_or_fileobj=str(path)) for path in sorted(args.out.rglob("*")) if path.is_file()]
-        info = api.create_commit(repo_id=REPO, repo_type="dataset", operations=operations, parent_commit=args.expected_parent, commit_message="Restore displayed choices and add visible-action labels, flags and citation")
-        result = {"url": f"https://huggingface.co/datasets/{REPO}", "revision": info.oid, "commit_url": info.commit_url}
-        (ROOT / ".local/publication.json").write_text(json.dumps(result, indent=2) + "\n")
-        print(json.dumps(result, indent=2))
+    if not args.publish:
+        return
+    assert args.expected_parent, "Publishing needs an explicitly inspected HF parent revision"
+    api = HfApi()
+    assert api.dataset_info(REPO).sha == args.expected_parent, "HF changed; inspect before publishing"
+    files = {str(p.relative_to(args.staged)): p for p in args.staged.rglob("*") if p.is_file()}
+    remote = set(api.list_repo_files(REPO, repo_type="dataset"))
+    assert remote <= files.keys() | EARLIER_CHECKS | {".gitattributes"}, "Unexpected remote files; inspect before replacing"
+    operations = [CommitOperationAdd(path_in_repo=name, path_or_fileobj=str(path)) for name, path in sorted(files.items())]
+    operations += [CommitOperationDelete(path_in_repo=name) for name in sorted(remote - files.keys() - {".gitattributes"})]
+    result = api.create_commit(repo_id=REPO, repo_type="dataset", parent_commit=args.expected_parent,
+                               operations=operations, commit_message="Publish Virtue Choices: game and everyday action choices with nine-tradition labels")
+    receipt = {"url": "https://huggingface.co/datasets/" + REPO, "revision": result.oid,
+               "commit_url": result.commit_url, "scenarios": release["scenarios"],
+               "choices": release["choices"], "virtue_labelled_scenes": release["virtue_labelled_scenes"],
+               "virtue_labelled_choices": release["virtue_labelled_choices"]}
+    (ROOT / ".local/publication.json").write_text(json.dumps(receipt, indent=2) + "\n")
+    print(json.dumps(receipt, indent=2))
 
 
 if __name__ == "__main__":

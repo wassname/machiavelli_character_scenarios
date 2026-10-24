@@ -9,11 +9,11 @@ authors:
     alias: wassname
 repository-code: "https://github.com/wassname/virtue-choices"
 url: "https://huggingface.co/datasets/wassname/virtue-choices"
-version: "2.0.0-preview"
+version: "2.0.0"
 license:
   - MIT
   - CC-BY-4.0
-abstract: "Game scenes and everyday dilemmas with choice-level virtue judgements for studying language models' stated decisions. This local preview combines MACHIAVELLI and DailyDilemmas with teachings from tiny-virtues; source licences apply by dataset."
+abstract: "Game scenes and everyday dilemmas with choice-level virtue judgements for studying language models' stated decisions. Combines MACHIAVELLI and DailyDilemmas with teachings from tiny-virtues; source licences apply by dataset."
 references:
   - type: conference-paper
     title: "Do the Rewards Justify the Means? Measuring Trade-Offs Between Rewards and Ethical Behavior in the Machiavelli Benchmark"
