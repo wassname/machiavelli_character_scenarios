@@ -21,6 +21,12 @@ def uniform_baseline(values: dict[str, list[float]]) -> list[float]:
     return [sum(vector[index] for vector in values.values()) / len(values) for index in range(width)]
 
 
+def position_baseline(values: dict[str, list[float]], position: int) -> list[float]:
+    keys = sorted(values, key=int)
+    assert 0 <= position < len(keys)
+    return [(a + b) / 2 for a, b in zip(values[keys[position]], values[keys[-position-1]], strict=True)]
+
+
 def cluster_interval(vectors: dict[str, list[float]], games: dict[str, str], *, seed: int, replicates: int) -> list[tuple[float, float]]:
     grouped = defaultdict(list)
     for source_id, vector in vectors.items():
@@ -232,19 +238,22 @@ def score(run: Path, virtues: Path, *, replicates: int = 1000, source_audit_path
     position_controls = []
     control_cohorts = [("all_planned", set(scenes))] + ([("paired_complete", paired)] if paired else [])
     for cohort, identities in control_cohorts:
-        control = {}
-        for source_id in identities:
-            keys = sorted(scenes[source_id]["choice_text"], key=int)
-            vector = [(raw[source_id, keys[0]][item]["signed"] + raw[source_id, keys[-1]][item]["signed"]) / 2 for item in items]
-            control[source_id] = [sum(vector[i] for i in indices) / len(indices) - baselines[source_id][len(items) + j]
-                                  for j, indices in enumerate(by_tradition.values())]
-        intervals = cluster_interval(control, games, seed=20261023, replicates=replicates)
-        for index, tradition in enumerate(traditions):
-            position_controls.append({"cohort": cohort, "tradition": tradition, "scenes": len(identities),
-                "delta_from_uniform": sum(vector[index] for vector in control.values()) / len(identities),
-                "ci95_low": intervals[index][0], "ci95_high": intervals[index][1]})
+        for policy in ("displayed_first", "displayed_middle"):
+            control = {}
+            for source_id in identities:
+                choices = scenes[source_id]["choice_text"]
+                position = 0 if policy == "displayed_first" else len(choices) // 2
+                values = {key: [raw[source_id, key][item]["signed"] for item in items] for key in choices}
+                vector = position_baseline(values, position)
+                control[source_id] = [sum(vector[i] for i in indices) / len(indices) - baselines[source_id][len(items) + j]
+                                      for j, indices in enumerate(by_tradition.values())]
+            intervals = cluster_interval(control, games, seed=20261023, replicates=replicates)
+            for index, tradition in enumerate(traditions):
+                position_controls.append({"cohort": cohort, "policy": policy, "tradition": tradition, "scenes": len(identities),
+                    "delta_from_uniform": sum(vector[index] for vector in control.values()) / len(identities),
+                    "ci95_low": intervals[index][0], "ci95_high": intervals[index][1]})
     (run / "position_control.json").write_text(json.dumps(position_controls, indent=2) + "\n")
-    comparable_control = {row["tradition"]: row["delta_from_uniform"] for row in position_controls if row["cohort"] == "paired_complete"}
+    comparable_control = {row["tradition"]: row["delta_from_uniform"] for row in position_controls if row["cohort"] == "paired_complete" and row["policy"] == "displayed_first"}
     for row in per_tradition:
         row["displayed_first_control_delta"] = comparable_control[row["tradition"]]
     for filename, rows in (("per_virtue.jsonl", per_virtue), ("per_tradition.jsonl", per_tradition)):
@@ -252,7 +261,7 @@ def score(run: Path, virtues: Path, *, replicates: int = 1000, source_audit_path
             for row in rows:
                 stream.write(json.dumps(row, ensure_ascii=False) + "\n")
     result = {"coverage": coverage, "paired_complete_scenes": len(paired), "paired_complete_games": len({games[key] for key in paired}),
-        "position_control": "Always select displayed action 0 in both orders: original first and last averaged. position_control.json reports all planned scenes and the same paired-complete cohort as the model scores. No inference calls.",
+        "position_control": "Always select displayed first or displayed middle in both orders. Middle remains the same original action for odd choice counts, so reversal stability alone does not rule out position bias. Both controls report all planned scenes and the secondary all-model paired cohort. No inference calls.",
         "paired_complete_definition": "All requested models valid in both option orders for absolute summaries; pairwise differences use each pair’s own complete scenes.",
         "tradition_items": {key: len(value) for key, value in by_tradition.items()},
         "baseline": "Uniform over every available action within the same scene; paired-complete scenes only for score summaries.",

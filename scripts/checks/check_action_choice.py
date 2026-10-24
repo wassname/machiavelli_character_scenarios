@@ -15,7 +15,7 @@ import pyarrow.parquet as pq
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "evaluation"))
 from action_choice import MODEL_PATH, ROOT, build_packet, embedded_overlay, parse_receipt, render, select_scenes, scene_spread, build_scope_packet, repeat_summary
-from score_action_choice import uniform_baseline, cluster_interval, paired_summary
+from score_action_choice import uniform_baseline, cluster_interval, paired_summary, position_baseline
 import eval_api
 from eval_api import api_key, transient_provider_error
 from billing_reservations import outstanding, unknown_fees, noncash_reviews
@@ -97,6 +97,8 @@ def main() -> None:
     assert repeated["complete_conditions"] == 1 and repeated["same_prompt_pairs"] == 4 and repeated["order_pairs"] == 2
     assert repeated["status_counts"]["transport_error"] == 1
     values = {"a": [-1., .3], "b": [1., .5], "c": [.6, -.5]}
+    assert position_baseline({"0": [0.], "1": [1.], "2": [0.]}, 0) == [0.]
+    assert position_baseline({"0": [0.], "1": [1.], "2": [0.]}, 1) == [1.]
     baseline = uniform_baseline(values)
     assert all(abs(sum(vector[i] - baseline[i] for vector in values.values())) < 1e-12 for i in range(2))
     assert cluster_interval({"a": [0., 0.], "b": [0., 0.]}, {"a": "game1", "b": "game2"}, seed=1, replicates=100) == [(0., 0.), (0., 0.)]
