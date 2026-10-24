@@ -6,6 +6,7 @@ from collections import Counter
 import fcntl
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import random
@@ -37,12 +38,25 @@ def file_sha(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def scene_spread(labels: dict) -> dict:
+    direct = [key for key, value in next(iter(labels.values())).items() if value["derived_from"] is None]
+    traditions = sorted({key.split("|")[0] for key in direct})
+    vectors = [[choice[key]["signed"] for key in direct] for choice in labels.values()]
+    means = [sum(v[i] for v in vectors) / len(vectors) for i in range(len(direct))]
+    spread = math.sqrt(sum((v[i] - means[i]) ** 2 for v in vectors for i in range(len(direct))) / (len(vectors) * len(direct)))
+    profiles = [[sum(choice[key]["signed"] for key in direct if key.split("|")[0] == tradition)
+                 / sum(key.split("|")[0] == tradition for key in direct) for tradition in traditions] for choice in labels.values()]
+    tradeoff = max([0.] + [min(max(delta), -min(delta)) for a in profiles for b in profiles
+                          for delta in [[x - y for x, y in zip(a, b, strict=True)]]])
+    return {"action_label_spread": spread, "tradition_tradeoff_spread": tradeoff}
+
+
 def embedded_overlay(inputs: Path, out: Path) -> Path:
     columns = ["source_id", "source", "choice_text", "has_virtue_labels", "choice_virtue_labels", "virtue_selection_priority"]
     assert set(columns) <= set(pq.read_schema(inputs).names), "Use the virtue-labelled dataset; the earlier release lacks these labels"
     choices = []
     for row in pq.read_table(inputs, columns=columns).to_pylist():
-        if row["source"] != "machiavelli" or not row["has_virtue_labels"]:
+        if not row["has_virtue_labels"]:
             continue
         labels = json.loads(row["choice_virtue_labels"])
         assert labels.keys() == json.loads(row["choice_text"]).keys(), "Partial scene labels"
@@ -50,27 +64,28 @@ def embedded_overlay(inputs: Path, out: Path) -> Path:
             assert len(virtues) == 80
             choices.append({"source_id": row["source_id"], "choice_id": choice_id,
                             "selection_priority": row["virtue_selection_priority"], "virtues": virtues})
-    assert choices, "No labelled MACHIAVELLI choices"
+    assert choices, "No fully labelled choices"
     pq.write_table(pa.Table.from_pylist(choices), out)
     return out
 
 
-def select_scenes(path: Path, overlay: Path, count: int, seed: int) -> list[dict]:
-    columns = ["source_id", "source", "game_id", "player_character", "text", "choice_text", "actions_text", "has_virtue_labels"]
+def select_scenes(path: Path, overlay: Path, count: int | None, seed: int, source: str = "both") -> list[dict]:
+    columns = ["source_id", "source", "game_id", "topic_group", "player_character", "text", "choice_text", "actions_text", "has_virtue_labels", "choice_virtue_labels"]
     candidates = [row for row in pq.read_table(path, columns=columns).to_pylist()
-                  if row["has_virtue_labels"] and row["source"] == "machiavelli"]
-    assert len(candidates) == 2500 and 0 < count <= len(candidates)
+                  if row["has_virtue_labels"] and (source == "both" or row["source"] == source)]
+    assert candidates and (count is None or 0 < count <= len(candidates))
     source_choices = {}
     for row in pq.read_table(overlay, columns=["source_id", "choice_id"]).to_pylist():
         assert row["choice_id"] not in source_choices.setdefault(row["source_id"], set())
         source_choices[row["source_id"]].add(row["choice_id"])
-    assert set(source_choices) == {row["source_id"] for row in candidates}, "Scene/virtue cohort identity mismatch"
+    assert {row["source_id"] for row in candidates} <= set(source_choices), "Scene/virtue cohort identity mismatch"
     groups = {}
     for row in sorted(candidates, key=lambda row: row["source_id"]):
         row["choice_text"] = json.loads(row["choice_text"])
         assert set(row["choice_text"]) == source_choices[row["source_id"]], "Missing or extra labelled choices"
-        assert row["source"] == "machiavelli"
-        groups.setdefault(row["game_id"], []).append(row)
+        row.update(scene_spread(json.loads(row.pop("choice_virtue_labels"))))
+        row["eval_cluster"] = row["source"] + ":" + (row["game_id"] if row["source"] == "machiavelli" else row["topic_group"])
+        groups.setdefault(row["eval_cluster"], []).append(row)
     rng = random.Random(seed)
     for rows in groups.values():
         rng.shuffle(rows)
@@ -78,7 +93,7 @@ def select_scenes(path: Path, overlay: Path, count: int, seed: int) -> list[dict
     rng.shuffle(games)
     ordered = [groups[game][depth] for depth in range(max(map(len, groups.values())))
                for game in games if depth < len(groups[game])]
-    return ordered[:count]
+    return ordered if count is None else ordered[:count]
 
 
 def render(row: dict, order: str) -> tuple[str, dict]:
@@ -106,7 +121,7 @@ def build_packet(row: dict, order: str, model: str, config: dict) -> dict:
                "messages": [{"role": "system", "content": SYSTEM}, {"role": "user", "content": content}],
                "response_format": {"type": "json_schema", "json_schema": {"name": "action_choice", "strict": True, "schema": schema}}}
     return {"request": payload, "metadata": {"source_id": row["source_id"], "game_id": row["game_id"],
-             "model": model, "order": order, "displayed_to_original": mapping,
+             "model": model, "order": order, "source": row["source"], "eval_cluster": row["eval_cluster"], "displayed_to_original": mapping,
              "original_prompt_sha256": hashlib.sha256(row["text"].encode()).hexdigest()}}
 
 
@@ -152,7 +167,13 @@ def prepare(args: argparse.Namespace, config: dict) -> tuple[list[dict], dict]:
     embedded = args.virtues is None
     if embedded:
         args.virtues = embedded_overlay(args.inputs, args.out / "virtues.parquet")
-    scenes = select_scenes(args.inputs, args.virtues, args.count, args.seed)
+    scenes = select_scenes(args.inputs, args.virtues, args.count, args.seed, args.source)
+    strata = {}
+    for source in sorted({row["source"] for row in scenes}):
+        subset = [row for row in scenes if row["source"] == source]
+        strata[source] = {metric: [row["source_id"] for row in sorted(subset, key=lambda r: (-r[metric], r["source_id"]))[:max(1, math.ceil(len(subset) / 4))]]
+                          for metric in ("action_label_spread", "tradition_tradeoff_spread")}
+    (args.out / "label_only_strata.json").write_text(json.dumps({"rule": "Top quartile within each source, using labels only before model calls; spread over 66 direct items and opposing rankings across 9 tradition means. Exploratory measurement, not proof of label accuracy.", "sources": strata}, indent=2) + "\n")
     with (args.out / "scenes.jsonl").open("w") as stream:
         for row in scenes:
             stream.write(json.dumps(row, ensure_ascii=False) + "\n")
@@ -161,12 +182,13 @@ def prepare(args: argparse.Namespace, config: dict) -> tuple[list[dict], dict]:
     estimates = {}
     for model, settings in config["models"].items():
         selected = [packet for packet in packets if packet["metadata"]["model"] == model]
-        characters = sum(len(json.dumps(packet["request"], ensure_ascii=False)) for packet in selected)
-        estimates[model] = {"requests": len(selected), "serialized_characters": characters,
-            "central_usd": (characters / 4 * settings["input_usd_per_million"] + len(selected) * 256 * settings["output_usd_per_million"]) / 1e6,
-            "conservative_usd": (characters / 3 * settings["input_usd_per_million"] + len(selected) * config["max_tokens"] * settings["output_usd_per_million"]) / 1e6}
-    manifest = {"author": "PI/Sol", "task": "Choose a game action, not classify virtues", "scenes": len(scenes),
-                "games": len({row["game_id"] for row in scenes}), "requests": len(packets), "seed": args.seed,
+        uncached = [packet for packet in selected if not (ROOT / "data/interim/action_choice_cache" / (digest(packet["request"]) + ".json.gz")).exists()]
+        characters = sum(len(json.dumps(packet["request"], ensure_ascii=False)) for packet in uncached)
+        estimates[model] = {"requests": len(selected), "expected_cache_hits": len(selected) - len(uncached), "expected_new_requests": len(uncached), "serialized_characters": characters,
+            "central_usd": (characters / 4 * settings["input_usd_per_million"] + len(uncached) * 256 * settings["output_usd_per_million"]) / 1e6,
+            "conservative_usd": (characters / 3 * settings["input_usd_per_million"] + len(uncached) * config["max_tokens"] * settings["output_usd_per_million"]) / 1e6}
+    manifest = {"author": "PI/Sol", "task": "Choose a proposed action, not classify virtues", "scenes": len(scenes),
+                "games": len({row["game_id"] for row in scenes if row["source"] == "machiavelli"}), "clusters": len({row["eval_cluster"] for row in scenes}), "source_counts": dict(Counter(row["source"] for row in scenes)), "requests": len(packets), "seed": args.seed,
                 "scene_table_sha256": file_sha(args.inputs), "virtue_table_sha256": file_sha(args.virtues),
                 "virtue_table_source": "embedded dataset labels" if embedded else "explicit overlay",
                 "runtime_type_checking": bool(os.environ.get("BEARTYPE")),
@@ -185,7 +207,8 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--inputs", type=Path, default=ROOT / "data/processed/parquet/train.parquet")
     parser.add_argument("--virtues", type=Path, help="Optional choice-level overlay; otherwise read the dataset's embedded virtue labels")
-    parser.add_argument("--count", type=int, default=500)
+    parser.add_argument("--count", type=int, help="Omit to evaluate every fully labelled scene")
+    parser.add_argument("--source", choices=["both", "machiavelli", "daily_dilemmas"], default="both")
     parser.add_argument("--seed", type=int, default=20261023)
     parser.add_argument("--allow-paid", action="store_true")
     parser.add_argument("--key-source", choices=["env", "pi"], default="env")

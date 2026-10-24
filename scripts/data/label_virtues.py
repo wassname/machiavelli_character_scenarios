@@ -55,22 +55,22 @@ def select_rows(args: argparse.Namespace) -> list[dict]:
     return rows
 
 
-def packets(rubric: dict, items: list[dict], actions: list[dict], batch_size: int):
+def packets(rubric: dict, items: list[dict], actions: list[dict], batch_size: int, *, request_fn=request):
     full_owner = items[0]["item_id"]
     for item in items:
         for start in range(0, len(actions), batch_size):
             batch = actions[start:start + batch_size]
             full = item["item_id"] == full_owner
-            yield item, batch, full, request(rubric, item, batch, full_feedback=full)
+            yield item, batch, full, request_fn(rubric, item, batch, full_feedback=full)
 
 
-def preflight(args: argparse.Namespace, rubric: dict, items: list[dict], actions: list[dict]) -> dict:
+def preflight(args: argparse.Namespace, rubric: dict, items: list[dict], actions: list[dict], *, request_fn=request) -> dict:
     characters = full_characters = count = 0
     example = None
-    for item, batch, full, payload in packets(rubric, items, actions, args.batch_size):
+    for item, batch, full, payload in packets(rubric, items, actions, args.batch_size, request_fn=request_fn):
         size = len(json.dumps(payload, ensure_ascii=False))
         characters += size
-        full_characters += size if full else len(json.dumps(request(rubric, item, batch, full_feedback=True), ensure_ascii=False))
+        full_characters += size if full else len(json.dumps(request_fn(rubric, item, batch, full_feedback=True), ensure_ascii=False))
         if example is None:
             path = args.out / "example_request.json"
             path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
@@ -94,7 +94,8 @@ def preflight(args: argparse.Namespace, rubric: dict, items: list[dict], actions
     return estimate
 
 
-async def paid(args: argparse.Namespace, rubric: dict, items: list[dict], actions: list[dict]) -> dict:
+async def paid(args: argparse.Namespace, rubric: dict, items: list[dict], actions: list[dict], *, request_fn=request,
+               parse_fn=parse_answers, cache_name="virtues_v2_cache") -> dict:
     ledger = ROOT / ".local/billing.jsonl"
     initial = sum(row["cost_usd"] for row in map(json.loads, ledger.read_text().splitlines()))
     spent = reserved = 0.0
@@ -103,7 +104,7 @@ async def paid(args: argparse.Namespace, rubric: dict, items: list[dict], action
     full_feedback = Counter()
     stopping = False
     contrary = {pair["virtue_id"]: pair["vice_id"] for pair in rubric["contraries"]}
-    cache = ROOT / "data/interim/virtues_v2_cache"
+    cache = ROOT / "data/interim" / cache_name
     cache.mkdir(parents=True, exist_ok=True)
     if args.key_source == "pi":
         auth = json.loads((Path.home() / ".pi/agent/auth.json").read_text())
@@ -114,7 +115,7 @@ async def paid(args: argparse.Namespace, rubric: dict, items: list[dict], action
         key = os.environ["OPENROUTER_API_KEY"]
     headers = {"Authorization": "Bearer " + key,
                "X-OpenRouter-Title": "machiavelli-character-scenarios/virtues-v2"}
-    work = packets(rubric, items, actions, args.batch_size)
+    work = packets(rubric, items, actions, args.batch_size, request_fn=request_fn)
     async with httpx.AsyncClient(headers=headers, timeout=180) as client:
         with (args.out / "labels.jsonl").open("w") as labels:
             async def worker():
@@ -172,7 +173,7 @@ async def paid(args: argparse.Namespace, rubric: dict, items: list[dict], action
                         reserved -= RESERVATION_USD
                 assert body["model"] == rubric["served_model"], body["model"]
                 assert body["provider"] == "TypeSafe", body["provider"]
-                scores = parse_answers(body, payload, item, batch)
+                scores = parse_fn(body, payload, item, batch)
                 if not cached:
                     record = {"request_key": key, "request": payload, "response": body}
                     temp = path.with_suffix(".tmp")

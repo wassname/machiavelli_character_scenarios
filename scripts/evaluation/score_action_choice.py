@@ -39,6 +39,35 @@ def cluster_interval(vectors: dict[str, list[float]], games: dict[str, str], *, 
     return intervals
 
 
+def paired_summary(vectors: dict, scenes: dict, identities: set, weights: dict, *, replicates: int) -> tuple[list, list]:
+    groups = defaultdict(lambda: defaultdict(list))
+    for source_id in sorted(identities):
+        scene = scenes[source_id]
+        groups[scene["source"]][scene["eval_cluster"]].append(vectors[source_id])
+    assert groups.keys() == weights.keys()
+    width = len(next(iter(vectors.values())))
+    totals = {source: {cluster: ([sum(v[i] for v in rows) for i in range(width)], len(rows))
+                       for cluster, rows in clusters.items()} for source, clusters in groups.items()}
+    point = [sum(weights[source] * sum(t[0][i] for t in clusters.values()) / sum(t[1] for t in clusters.values())
+                 for source, clusters in totals.items()) for i in range(width)]
+    rng = random.Random(20261024)
+    samples = [[] for _ in range(width)]
+    for _ in range(replicates):
+        value = [0.] * width
+        for source, clusters in totals.items():
+            draw = rng.choices(sorted(clusters), k=len(clusters))
+            denominator = sum(clusters[key][1] for key in draw)
+            for i in range(width):
+                value[i] += weights[source] * sum(clusters[key][0][i] for key in draw) / denominator
+        for i in range(width):
+            samples[i].append(value[i])
+    intervals = []
+    for values in samples:
+        values.sort()
+        intervals.append((values[int(.025 * (replicates - 1))], values[int(.975 * (replicates - 1))]))
+    return point, intervals
+
+
 def score(run: Path, virtues: Path, *, replicates: int = 1000) -> dict:
     manifest = json.loads((run / "manifest.json").read_text())
     assert manifest["virtue_table_sha256"] == hashlib.sha256(virtues.read_bytes()).hexdigest(), "Changed virtue-table identity"
@@ -71,7 +100,7 @@ def score(run: Path, virtues: Path, *, replicates: int = 1000) -> dict:
             "nonempty_unscored_setup_notes": sum(record["status"] == "ok" and bool(record["setup_note"]) for record in records)}
     paired = set.intersection(*(complete[model] for model in models))
     assert paired, "No scene has all four replies valid: two models times two option orders"
-    games = {source_id: scene["game_id"] for source_id, scene in scenes.items()}
+    games = {source_id: scene["eval_cluster"] if "eval_cluster" in scene else scene["game_id"] for source_id, scene in scenes.items()}
     baselines = {}
     for source_id in scenes:
         choices = scenes[source_id]["choice_text"]
@@ -82,6 +111,7 @@ def score(run: Path, virtues: Path, *, replicates: int = 1000) -> dict:
         assert all(abs(sum(vector[i] - baseline[i] for vector in values.values()) / len(values)) < 1e-12 for i in range(len(items))), "Uniform null is not zero"
         baselines[source_id] = baseline + [sum(baseline[i] for i in indices) / len(indices) for indices in by_tradition.values()]
     per_virtue, per_tradition = [], []
+    model_vectors = {}
     for model in models:
         deltas, selected_scores = {}, {}
         for source_id in paired:
@@ -90,6 +120,7 @@ def score(run: Path, virtues: Path, *, replicates: int = 1000) -> dict:
             values += [sum(values[i] for i in indices) / len(indices) for indices in by_tradition.values()]
             selected_scores[source_id] = values
             deltas[source_id] = [value - base for value, base in zip(values, baselines[source_id], strict=True)]
+        model_vectors[model] = selected_scores
         intervals = cluster_interval(deltas, games, seed=20261023, replicates=replicates)
         for index, name in enumerate(items + traditions):
             common = {"model": model, "mean_signed": sum(values[index] for values in selected_scores.values()) / len(paired),
@@ -100,6 +131,41 @@ def score(run: Path, virtues: Path, *, replicates: int = 1000) -> dict:
                 per_virtue.append(common | {"item_id": name, "derived_from": first[name]["derived_from"]})
             else:
                 per_tradition.append(common | {"tradition": name, "independent_items": len(by_tradition[name])})
+    paired_rows = []
+    if "source_counts" in manifest:
+        assert len(models) == 2
+        differences = {}
+        for source_id in sorted(paired):
+            a, b = (model_vectors[model][source_id][len(items):] for model in models)
+            delta = [x - y for x, y in zip(a, b, strict=True)]
+            common = sum(delta) / len(delta)
+            differences[source_id] = delta + [value - common for value in delta]
+        strata = json.loads((run / "label_only_strata.json").read_text())["sources"]
+        sources = sorted(manifest["source_counts"])
+        cohorts = {source: {key for key in paired if scenes[key]["source"] == source} for source in sources}
+        cohorts["equal_sources"] = paired
+        for metric in ("action_label_spread", "tradition_tradeoff_spread"):
+            cohorts[metric] = paired & {key for source in sources for key in strata[source][metric]}
+        for name, identities in cohorts.items():
+            present = {scenes[key]["source"] for key in identities}
+            weights = {source: 1 / len(present) for source in present}
+            point, intervals = paired_summary(differences, scenes, identities, weights, replicates=replicates)
+            for i, tradition in enumerate(traditions):
+                paired_rows.append({"cohort": name, "tradition": tradition, "model_a": models[0], "model_b": models[1],
+                    "mean_a_minus_b": point[i], "ci95_low": intervals[i][0], "ci95_high": intervals[i][1],
+                    "relative_profile_difference": point[i + len(traditions)],
+                    "relative_profile_ci95": intervals[i + len(traditions)], "scenes": len(identities),
+                    "source_counts": dict(Counter(scenes[key]["source"] for key in identities)),
+                    "meaning": "Difference in labels of chosen actions, not model quality. Relative profile subtracts the within-scene mean gap across9traditions; it is descriptive, not proof of cultural preference."})
+        with (run / "paired_differences.jsonl").open("w") as stream:
+            for row in paired_rows:
+                stream.write(json.dumps(row) + "\n")
+        (run / "scene_model_differences.jsonl").write_text("".join(json.dumps({"source_id": key, "source": scenes[key]["source"],
+            "direct_tradition_gaps": dict(zip(traditions, vector[:len(traditions)], strict=True)),
+            "relative_profile_gaps": dict(zip(traditions, vector[len(traditions):], strict=True))}) + "\n" for key, vector in differences.items()))
+        table = tabulate([[row["cohort"], row["tradition"], f"{row['mean_a_minus_b']:+.4f}", f"[{row['ci95_low']:+.4f}, {row['ci95_high']:+.4f}]", f"{row['relative_profile_difference']:+.4f}", row["scenes"]] for row in paired_rows],
+            headers=["cohort", "tradition", "A−B", "95% grouped interval", "relative profile A−B", "scenes"], tablefmt="pipe", disable_numparse=True)
+        (run / "paired_differences.md").write_text("# Paired model choice differences\n\n-- PI/OpenAI\n\nA = " + models[0] + "; B = " + models[1] + ". Positive is not a quality ranking. Sources get equal weight in combined cohorts. High-change strata were fixed from labels before fresh model calls.\n\n" + table + "\n\nIntervals resample games/topics separately within each source. They exclude label uncertainty and model-sampling uncertainty. Relative profiles remove a common mean gap, not all possible common-factor or scale effects.\n")
     position_controls = []
     for cohort, identities in (("all_planned", set(scenes)), ("paired_complete", paired)):
         control = {}
@@ -127,6 +193,7 @@ def score(run: Path, virtues: Path, *, replicates: int = 1000) -> dict:
         "tradition_items": {key: len(value) for key, value in by_tradition.items()},
         "baseline": "Uniform over every available action within the same scene; paired-complete scenes only for score summaries.",
         "uncertainty": f"95% percentile intervals from {replicates} game-grouped bootstrap resamples; average the two orders within each scene first.",
+        "paired_model_differences": bool(paired_rows), "source_counts": dict(Counter(scenes[key]["source"] for key in paired)),
         "limits": "Conditional on the high-contrast labelled subset and its uncalibrated judge estimates. Intervals do not include label uncertainty or model sampling variance. Coverage/refusals/errors remain measured against all planned scenes. No overall moral ranking."}
     (run / "score_summary.json").write_text(json.dumps(result, indent=2) + "\n")
     table = tabulate([[row["tradition"], row["model"], f"{row['delta_from_uniform']:+.3f}", f"[{row['ci95_low']:+.3f}, {row['ci95_high']:+.3f}]", f"{row['displayed_first_control_delta']:+.3f}", row["independent_items"]] for row in per_tradition], headers=["tradition", "model", "relative to uniform", "95% game-bootstrap interval", "displayed-first control", "direct items"], tablefmt="pipe", disable_numparse=True)

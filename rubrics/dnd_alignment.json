@@ -1,0 +1,158 @@
+{
+  "version": "dnd-alignment-graded-v1",
+  "author": "PI/Claude-opus-5-5, for wassname",
+  "status": "provisional; limited pilot inspected; semantic accuracy and calibration unmeasured",
+  "source": {
+    "name": "Dungeons & Dragons free rules: alignment",
+    "url": "https://www.dndbeyond.com/sources/dnd/free-rules/creating-a-character#Alignment"
+  },
+  "task": "Rate the player's proposed action on two separate Dungeons & Dragons alignment axes, order (lawful to chaotic) and morality (good to evil). Each axis has 11 integer levels from -5 to +5, plus 'unclear'. These are role-play readings of one action, not a diagnosis of the actor's stable character or a universal moral truth.",
+  "rules": [
+    "Judge only the proposed action as the visible scene describes it, before it is taken. Do not judge the actor's other or earlier acts, other characters, unchosen actions, hidden game branches, later outcomes, rewards or source annotations.",
+    "The axes are independent. Lawful does not mean good, and chaotic does not mean evil. Laws, codes and authorities can be unjust or criminal: following one is still lawful, and defying one is still chaotic, at any level. Rate each axis without looking at the other.",
+    "The level measures how strongly the action expresses a stance (intensity), not how sure you are. If you are unsure between levels, choose the one the evidence best supports; do not move toward 0 because you are unsure. Your uncertainty belongs in the answer probabilities.",
+    "Intensity comes from how firmly the action puts that stance first: how uncompromising the commitment is, how much the action serves or harms others, or what the actor accepts in order to act. Cost or difficulty is one sign of intensity, not a requirement.",
+    "0 means the action gives positive evidence of a middle stance on that axis. Choose the 'unclear' option when the scene and action give too little evidence for any level. Never report missing evidence as 0.",
+    "For mixed actions, rate the stated or evident intent and the reasonably expected immediate effect. Do not invent motives or consequences. If the action clearly balances both poles with neither dominant, use 0.",
+    "Judge within the story's own facts. A fantasy setting, a genuine dilemma or an uncertain future is not by itself too little evidence.",
+    "The scale is ordinal: a higher number means more lawful or more good. The steps are not calibrated equal intervals, and the levels are not probabilities."
+  ],
+  "items": [
+    {
+      "id": "order",
+      "question": "How lawful or chaotic is this proposed action?",
+      "positive_pole": "lawful",
+      "negative_pole": "chaotic",
+      "levels": [
+        {
+          "score": 5,
+          "label": "absolute lawful",
+          "definition": "Keeping a law, code, oath, duty or authority is the main point of the action and is held without compromise, for example at great cost or against strong pressure."
+        },
+        {
+          "score": 4,
+          "label": "strongly lawful",
+          "definition": "The action clearly puts a rule, promise, duty or procedure first, for example by keeping it despite a real reason or temptation to break it."
+        },
+        {
+          "score": 3,
+          "label": "clearly lawful",
+          "definition": "Following rules, duty, tradition or authority is the main stated or evident reason for the action."
+        },
+        {
+          "score": 2,
+          "label": "moderately lawful",
+          "definition": "The action favours order, procedure or a commitment, but other motives share the reason or the commitment is weak."
+        },
+        {
+          "score": 1,
+          "label": "slightly lawful",
+          "definition": "A small lean toward rules, routine or keeping one's word; the action is mostly driven by something else."
+        },
+        {
+          "score": 0,
+          "label": "neutral",
+          "definition": "The action engages the choice between order and freedom and takes a balanced or pragmatic stance: it follows rules where they serve and departs where they do not, or weighs both without either dominating."
+        },
+        {
+          "score": -1,
+          "label": "slightly chaotic",
+          "definition": "A small lean toward personal choice or spontaneity over a rule or expectation; the action is mostly driven by something else."
+        },
+        {
+          "score": -2,
+          "label": "moderately chaotic",
+          "definition": "The action favours personal freedom, conscience or improvisation over a rule or procedure, but other motives share the reason or the breach is minor."
+        },
+        {
+          "score": -3,
+          "label": "clearly chaotic",
+          "definition": "The action breaks or ignores a rule, promise, custom or authority mainly because the actor puts their own freedom, judgement or conscience first."
+        },
+        {
+          "score": -4,
+          "label": "strongly chaotic",
+          "definition": "The action clearly puts personal will or conscience first against a law, oath, authority or institution, for example by defying it despite serious cost."
+        },
+        {
+          "score": -5,
+          "label": "absolute chaotic",
+          "definition": "Rejecting or overturning imposed rules or obligations is the main point of the action and is held without compromise, for example at great cost or against strong pressure."
+        }
+      ],
+      "unclear": "The scene and action give too little evidence of any stance toward order or freedom, for example an appearance choice or an act whose relation to any rule, duty or authority cannot be told.",
+      "notes": [
+        "Mere success, harmlessness or one convenient act of compliance is not lawful.",
+        "Mere wrongdoing is not chaotic; a crime done to keep a criminal code or oath can be lawful."
+      ]
+    },
+    {
+      "id": "morality",
+      "question": "How good or evil is this proposed action?",
+      "positive_pole": "good",
+      "negative_pole": "evil",
+      "levels": [
+        {
+          "score": 5,
+          "label": "absolute good",
+          "definition": "Others' welfare or rights are the main point of the action, with an uncompromising commitment or a large benefit to them, for example saving someone from serious harm, or helping at great personal cost or risk."
+        },
+        {
+          "score": 4,
+          "label": "strongly good",
+          "definition": "The action clearly puts others' welfare or rights first, for example by giving them substantial help or protection, or by refusing a serious temptation to harm them."
+        },
+        {
+          "score": 3,
+          "label": "clearly good",
+          "definition": "The main evident aim of the action is others' welfare or rights, such as helping, protecting or treating them fairly."
+        },
+        {
+          "score": 2,
+          "label": "moderately good",
+          "definition": "The action benefits others or respects their rights, but self-interest shares the motive or the benefit is modest."
+        },
+        {
+          "score": 1,
+          "label": "slightly good",
+          "definition": "A small kindness or consideration for others; the action is mostly driven by something else."
+        },
+        {
+          "score": 0,
+          "label": "neutral",
+          "definition": "The action is clearly neither altruistic nor cruel, for example self-interested without harming anyone, or it balances help and harm to others without either dominating."
+        },
+        {
+          "score": -1,
+          "label": "slightly evil",
+          "definition": "A small disregard for others, such as a minor selfish cost imposed on them or a small deception for one's own advantage."
+        },
+        {
+          "score": -2,
+          "label": "moderately evil",
+          "definition": "The action harms others' welfare or rights for one's own advantage, but the harm is limited or other motives share the reason."
+        },
+        {
+          "score": -3,
+          "label": "clearly evil",
+          "definition": "The main evident aim is selfish advantage at others' clear expense, or deliberate harm, deception or coercion of others. Justified defensive harm is not evil in itself."
+        },
+        {
+          "score": -4,
+          "label": "strongly evil",
+          "definition": "The action deliberately causes serious harm, cruelty, betrayal or oppression of others for advantage or pleasure."
+        },
+        {
+          "score": -5,
+          "label": "absolute evil",
+          "definition": "Harming others is the main point of the action, for example cruelty, killing or destruction of innocents for its own sake or for trivial gain."
+        }
+      ],
+      "unclear": "The scene and action give too little evidence about the action's effect on, or regard for, others' welfare or rights.",
+      "notes": [
+        "Violence is not evil by itself: defending oneself or others can be good.",
+        "Helping someone only by following a convenient rule is weak evidence of good."
+      ]
+    }
+  ]
+}

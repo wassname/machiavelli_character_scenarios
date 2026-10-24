@@ -69,7 +69,7 @@ async def run_requests(packets: list[dict], out: Path, *, max_new_usd: float, co
                         counts["cache_hits"] += 1
                     else:
                         assert project_before + new + reserved + outstanding(ROOT) + RESERVATION <= 70, "Cumulative project cap $70 reached"
-                        assert scope_before + new + reserved + outstanding(ROOT, SCOPE) + RESERVATION <= 2, "Evaluation scope cap $2 (including pilots/replays) reached"
+                        assert scope_before + new + reserved + outstanding(ROOT, SCOPE) + RESERVATION <= 3, "Evaluation scope cap $3 (including expanded run, pilots and replays) reached"
                         assert new + reserved + RESERVATION <= max_new_usd, "This evaluation run's cap reached"
                         reserved += RESERVATION
                         try:
