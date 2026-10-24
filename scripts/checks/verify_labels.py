@@ -131,12 +131,12 @@ def verify(run: Path) -> dict:
             assert hashlib.sha256(json.dumps(value, sort_keys=True).encode()).hexdigest() == label_hashes[(row["source_id"], choice)]
     ledger = [json.loads(line) for line in (ROOT / ".local/billing.jsonl").open()]
     project_spend = sum(row["cost_usd"] for row in ledger)
-    run_spend = sum(row["cost_usd"] for row in ledger if (ROOT / row["run"]).resolve() == run.resolve())
+    run_spend = sum(row["cost_usd"] for row in ledger if "run" in row and (ROOT / row["run"]).resolve() == run.resolve())
     summary = json.loads((run / "summary.json").read_text())
     assert project_spend + outstanding(ROOT) <= 70
     assert math.isclose(run_spend, summary["charged_usd"], abs_tol=1e-8)
     assert summary["complete_actions"] == len(expected) == summary["actions"]
-    result = {"status": "PASS", "scenarios": len(original), "complete_actions": len(seen), "distinct_request_keys": len(cache_keys), "input_fields_preserved_in_exports": True, "original_fields_unchanged": path is None, "original_annotations_unchanged": True, "original_prompts_retained": True, "input_revision": original[0].get("input_revision", "original-published"), "only_visible_prompt_and_choice_sent": True, "every_saved_score_matches_raw_response": True, "complete_configured_questions_checked": True, "parquet_source_fields_preserved": True, "run_charged_usd": run_spend, "project_total_usd_at_verification": project_spend, "feedback_counts": dict(words), "raw_http_or_transport_errors": dict(api_errors), "caveat": "Artifact integrity and input isolation, not semantic accuracy or calibration."}
+    result = {"status": "PASS", "scenarios": len(original), "complete_actions": len(seen), "distinct_request_keys": len(cache_keys), "labels_sha256": hashlib.sha256((run / "labels.jsonl").read_bytes()).hexdigest(), "parquet_sha256": hashlib.sha256((run / "parquet/train.parquet").read_bytes()).hexdigest(), "inputs_sha256": config["inputs_sha256"], "rubric_version": config["rubric_version"], "served_models": sorted({label["served_model"] for parent in enriched for label in parent["choice_labels_visible"].values()}), "input_fields_preserved_in_exports": True, "original_fields_unchanged": path is None, "original_annotations_unchanged": True, "original_prompts_retained": True, "input_revision": original[0].get("input_revision", "original-published"), "only_visible_prompt_and_choice_sent": True, "every_saved_score_matches_raw_response": True, "complete_configured_questions_checked": True, "parquet_source_fields_preserved": True, "run_charged_usd": run_spend, "project_total_usd_at_verification": project_spend, "feedback_counts": dict(words), "raw_http_or_transport_errors": dict(api_errors), "caveat": "Artifact integrity and input isolation, not semantic accuracy or calibration."}
     (run / "verification.json").write_text(json.dumps(result, indent=2) + "\n")
     return result
 
