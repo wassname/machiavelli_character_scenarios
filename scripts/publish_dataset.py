@@ -4,19 +4,24 @@ import argparse
 from collections import Counter
 import hashlib
 import json
+import math
 from pathlib import Path
 import re
 import subprocess
+import sys
 
 from huggingface_hub import CommitOperationAdd, CommitOperationDelete, HfApi
 import pyarrow.parquet as pq
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "scripts/data"))
+from alignment_questions import numerical_score
 REPO = "wassname/virtue-choices"
 CORE_FILES = {
     "README.md", "CITATION.cff", "parquet/train.parquet", "staging_verification.json",
     "checks/virtues_v2.json", "checks/sources.json", "checks/scenario_reviews.json",
     "examples/visible_actions_v4_jev_1_13_request.json", "checks/daily_dilemmas_visible_labels.json",
+    "checks/dnd_alignment.json", "rubrics/dnd_alignment.json",
 }
 EARLIER_CHECKS = {
     "checks/budget.json", "checks/category_samples.jsonl", "checks/feedback_summary.json",
@@ -34,7 +39,14 @@ def verify(staged: Path) -> dict:
     actual = {str(p.relative_to(staged)) for p in staged.rglob("*") if p.is_file()}
     assert actual - {"release.json"} == expected, f"Release file allowlist differs: {actual ^ expected}"
     proof = json.loads((staged / "staging_verification.json").read_text())
-    assert proof["status"] == "PASS" and proof["existing_fields_and_labels_unchanged"]
+    assert proof["status"] == "PASS" and proof["all_preexisting_non_dnd_labels_preserved"]
+    assert proof["dnd_alignment_relabelled_choices"] == 39896
+    dnd_proof = json.loads((staged / "checks/dnd_alignment.json").read_text())
+    assert dnd_proof["status"] == "PASS" and dnd_proof["every_label_reconstructed_from_native_response"]
+    assert dnd_proof["choices"] == 39896 and dnd_proof["direct_cells"] == 79792
+    assert dnd_proof["served_model"] == "typesafe/jev-1.13-20260917"
+    assert (staged / "rubrics/dnd_alignment.json").read_bytes() == (ROOT / "rubrics/dnd_alignment.json").read_bytes()
+    assert hashlib.sha256((staged / "rubrics/dnd_alignment.json").read_bytes()).hexdigest() == dnd_proof["rubric_sha256"]
     assert proof["all_source_ids_and_choices_preserved"] and proof["all_selected_scene_choices_labelled"]
     assert proof["daily_dilemmas_annotations_preserved"] and not proof["full_teachings_or_native_traces_in_bundle"]
     assert proof["daily_dilemmas_visible_labels"] == 1360, "Include the complete shared DailyDilemmas label run"
@@ -51,7 +63,24 @@ def verify(staged: Path) -> dict:
     assert choices == 39896
     assert sum(len(json.loads(r["choice_text"])) for r in rows if r["has_virtue_labels"]) == proof["virtue_labelled_choices"] == 11443
     for row in rows:
-        assert json.loads(row["choice_labels_visible"]).keys() == json.loads(row["choice_text"]).keys()
+        labels = json.loads(row["choice_labels_visible"])
+        assert labels.keys() == json.loads(row["choice_text"]).keys()
+        for label in labels.values():
+            assert label["dnd_action_alignment"].keys() == {"order", "morality"}
+            for axis in label["dnd_action_alignment"].values():
+                assert axis["rubric_version"] == dnd_proof["rubric_version"] and axis["served_model"] == dnd_proof["served_model"]
+                raw, normalized = axis["raw_probabilities"], axis["normalized_probabilities"]
+                assert raw.keys() == normalized.keys() == {str(i) for i in range(-5, 6)} | {"unclear"}
+                assert all(type(p) in (int, float) and math.isfinite(p) and 0 <= p <= 1 for p in list(raw.values()) + list(normalized.values()))
+                mass = sum(raw.values())
+                assert mass > 0 and math.isclose(mass, 1, abs_tol=len(raw) * .005 + 1e-8)
+                assert all(math.isclose(normalized[key], p / mass, abs_tol=1e-12) for key, p in raw.items())
+                assert axis["unclear_probability"] == normalized["unclear"]
+                expected_score = numerical_score(normalized)
+                score = axis["score"]
+                assert (score is None and expected_score is None) or (
+                    type(score) in (int, float) and expected_score is not None and math.isfinite(score)
+                    and -5 <= score <= 5 and math.isclose(score, expected_score, abs_tol=1e-12))
     for relative in expected:
         path = staged / relative
         assert not path.is_symlink()
@@ -63,7 +92,7 @@ def verify(staged: Path) -> dict:
                "code_commit": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip(),
                "scenarios": len(rows), "choices": choices, "virtue_labelled_scenes": 3860,
                "virtue_labelled_choices": proof["virtue_labelled_choices"], "visible_labelled_scenes": len(rows), "visible_labelled_choices": choices, "source_counts": proof["source_counts"],
-               "rubric_version": proof["rubric_version"], "files_sha256": files,
+               "rubric_version": proof["rubric_version"], "dnd_rubric_version": dnd_proof["rubric_version"], "files_sha256": files,
                "validation": proof["validation_scope"]}
     (staged / "release.json").write_text(json.dumps(release, indent=2) + "\n")
     return release
@@ -81,7 +110,7 @@ def main() -> None:
         return
     assert args.expected_parent, "Publishing needs an explicitly inspected HF parent revision"
     subprocess.run(["git", "diff", "--quiet", "HEAD", "--", "README.md", "CITATION.cff", "dataset_metadata.yaml",
-                    "data/scenario_reviews.json", "data/sources.json", "scripts/publish_dataset.py",
+                    "data/scenario_reviews.json", "data/sources.json", "rubrics/dnd_alignment.json", "scripts/data/alignment_questions.py", "scripts/publish_dataset.py",
                     "scripts/data/stage_virtue_release.py", "docs/figures"], cwd=ROOT, check=True)
     api = HfApi()
     assert api.dataset_info(REPO).sha == args.expected_parent, "HF changed; inspect before publishing"

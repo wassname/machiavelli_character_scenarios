@@ -75,7 +75,7 @@ def checked_visible_labels(run: Path, inputs: Path, rows: list[dict]) -> tuple[d
 
 
 def stage(base: Path, run: Path, native_verification: Path, out: Path, *, dd_inputs: Path | None = None, dd_run: Path | None = None,
-          dd_visible_run: Path | None = None) -> dict:
+          dd_visible_run: Path | None = None, dnd_run: Path | None = None) -> dict:
     assert (dd_inputs is None) == (dd_run is None), "Supply both DailyDilemmas inputs and its complete labelled run"
     assert dd_visible_run is None or dd_inputs is not None
     rubric = load_rubric()
@@ -135,6 +135,36 @@ def stage(base: Path, run: Path, native_verification: Path, out: Path, *, dd_inp
         source_licenses["daily_dilemmas"] = "cc-by-4.0"
     assert len(set(source_ids)) == len(source_ids)
     assert merged.select(original.column_names).slice(0, original.num_rows).equals(original)
+    dnd_proof = None
+    if dnd_run is not None:
+        dnd_proof = json.loads((dnd_run / "verification.json").read_text())
+        dnd_path = dnd_run / "alignment.parquet"
+        assert dnd_proof["status"] == "PASS" and dnd_proof["every_label_reconstructed_from_native_response"]
+        assert dnd_proof["choices"] == 39896 and dnd_proof["direct_cells"] == 79792
+        assert dnd_proof["parquet_sha256"] == hashlib.sha256(dnd_path.read_bytes()).hexdigest()
+        assert dnd_proof["rubric_sha256"] == hashlib.sha256((ROOT / "rubrics/dnd_alignment.json").read_bytes()).hexdigest()
+        visible_all = [row | {"choice_text": json.loads(row["choice_text"])} for row in merged.select(["source_id", "player_character", "text", "choice_text"]).to_pylist()]
+        assert dnd_proof["visible_inputs_sha256"] == visible_identity(visible_all)
+        overlay = {(row["source_id"], row["choice_id"]): row["dnd_action_alignment"] for row in pq.read_table(dnd_path).to_pylist()}
+        assert len(overlay) == 39896
+        replaced = []
+        for source_id, previous in zip(source_ids, merged["choice_labels_visible"].to_pylist(), strict=True):
+            old = json.loads(previous)
+            changed = {}
+            for choice_id, label in old.items():
+                axes = overlay.pop((source_id, choice_id))
+                public_axes = {axis: {key: value for key, value in result.items() if key in
+                    {"score", "raw_probabilities", "normalized_probabilities", "unclear_probability", "criterion_order", "request_key", "rubric_version", "served_model"}} for axis, result in axes.items()}
+                assert public_axes.keys() == {"order", "morality"}
+                for axis in public_axes.values():
+                    assert axis["score"] is None or -5 <= axis["score"] <= 5
+                changed[choice_id] = label | {"dnd_action_alignment": public_axes}
+                assert {key: value for key, value in changed[choice_id].items() if key != "dnd_action_alignment"} == {key: value for key, value in label.items() if key != "dnd_action_alignment"}
+            replaced.append(json.dumps(changed, ensure_ascii=False, separators=(",", ":")))
+        assert not overlay
+        merged = merged.set_column(merged.schema.get_field_index("choice_labels_visible"), "choice_labels_visible", pa.array(replaced))
+        unchanged = [name for name in original.column_names if name != "choice_labels_visible"]
+        assert merged.select(unchanged).slice(0, original.num_rows).equals(original.select(unchanged))
     review_path = ROOT / "data/scenario_reviews.json"
     review_metadata = json.loads(review_path.read_text())
     reviews = review_metadata["cases"]
@@ -184,12 +214,14 @@ def stage(base: Path, run: Path, native_verification: Path, out: Path, *, dd_inp
     if dd_rows:
         for index, row in enumerate(dd_rows, original.num_rows):
             assert json.loads(dataset.data.column("source_annotations")[index].as_py()) == row["source_annotations"]
-            if dd_visible_run is not None:
+            if dd_visible_run is not None and dnd_run is None:
                 assert json.loads(dataset.data.column("choice_labels_visible")[index].as_py()) == dd_visible[row["source_id"]]
     result = {"status": "PASS", "author": "PI/Sol", "scenes": len(source_ids), "source_counts": dict(source_counts),
               "virtue_labelled_scenes": len(labels), "virtue_labelled_choices": sum(map(len, labels.values())),
               "virtue_cells": sum(map(len, labels.values())) * 80, "source_licenses": source_licenses,
-              "existing_fields_and_labels_unchanged": True, "all_source_ids_and_choices_preserved": True,
+              "existing_fields_and_labels_unchanged": dnd_run is None,
+              "all_preexisting_non_dnd_labels_preserved": True, "dnd_alignment_relabelled_choices": dnd_proof["choices"] if dnd_proof else 0,
+              "all_source_ids_and_choices_preserved": True,
               "all_selected_scene_choices_labelled": True, "unlabelled_choice_virtue_labels": {},
               "daily_dilemmas_annotations_preserved": bool(dd_rows), "daily_dilemmas_visible_labels": len(dd_visible), "hf_local_parquet_load": "PASS", "card_config_parse": "PASS",
               "known_review_flagged_scenes": len(reviews), "unreviewed_scenes": len(source_ids) - len(reviews),
@@ -206,6 +238,10 @@ def stage(base: Path, run: Path, native_verification: Path, out: Path, *, dd_inp
     if dd_visible_proof is not None:
         public_proof = {key: dd_visible_proof[key] for key in ("status", "scenarios", "complete_actions", "labels_sha256", "parquet_sha256", "inputs_sha256", "rubric_version", "served_models", "feedback_counts", "every_saved_score_matches_raw_response", "parquet_source_fields_preserved")}
         (checks / "daily_dilemmas_visible_labels.json").write_text(json.dumps(public_proof, indent=2) + "\n")
+    if dnd_proof is not None:
+        (checks / "dnd_alignment.json").write_text(json.dumps(dnd_proof, indent=2) + "\n")
+        (out / "rubrics").mkdir()
+        shutil.copyfile(ROOT / "rubrics/dnd_alignment.json", out / "rubrics/dnd_alignment.json")
     (out / "staging_verification.json").write_text(json.dumps(result, indent=2) + "\n")
     return result
 
@@ -218,6 +254,7 @@ if __name__ == "__main__":
     parser.add_argument("--dd-inputs", type=Path)
     parser.add_argument("--dd-run", type=Path)
     parser.add_argument("--dd-visible-run", type=Path, help="Verified DailyDilemmas behaviour, Stoic and D&D label run")
+    parser.add_argument("--dnd-run", type=Path, help="Complete native-verified numerical D&D overlay for both sources")
     parser.add_argument("--out", type=Path, required=True)
     args = parser.parse_args()
-    print(json.dumps(stage(args.base, args.run, args.native_verification, args.out, dd_inputs=args.dd_inputs, dd_run=args.dd_run, dd_visible_run=args.dd_visible_run), indent=2))
+    print(json.dumps(stage(args.base, args.run, args.native_verification, args.out, dd_inputs=args.dd_inputs, dd_run=args.dd_run, dd_visible_run=args.dd_visible_run, dnd_run=args.dnd_run), indent=2))
