@@ -15,7 +15,7 @@ from loguru import logger
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "scripts/data"))
-from billing_reservations import outstanding, unknown_fees, noncash_reviews
+from billing_reservations import outstanding, unknown_fees, noncash_reviews, PROJECT_CAP_USD, EVALUATION_CAP_USD
 from label_actions import api_key
 
 SCOPE = "action-choice-eval-v1"
@@ -33,8 +33,18 @@ def transient_provider_error(body: dict) -> bool:
     return code in {408, 429} or 500 <= code < 600
 
 
+def reserve_unknown_fee(event: dict, out: Path) -> None:
+    path = ROOT / ".local/billing_reservations.json"
+    rows = json.loads(path.read_text()) if path.exists() else []
+    rows.append({"request_key": digest({"payload_key": event["request_key"], "time": event["time"]}),
+                 "payload_request_key": event["request_key"], "scope": SCOPE,
+                 "reserved_usd": RESERVATION, "run": str(out), "attempt": event["attempt"],
+                 "reason": "Request may have been billed; no charge receipt returned"})
+    path.write_text(json.dumps(rows, indent=2) + "\n")
+
+
 async def run_requests(packets: list[dict], out: Path, *, max_new_usd: float, concurrency: int = 8,
-                       key_source: str = "env", refresh: bool = False) -> dict:
+                       key_source: str = "env", refresh: bool = False, cache_write: bool = True) -> dict:
     ledger = ROOT / ".local/billing.jsonl"
     ledger.parent.mkdir(parents=True, exist_ok=True)
     history = [json.loads(line) for line in ledger.open()] if ledger.exists() else []
@@ -44,6 +54,10 @@ async def run_requests(packets: list[dict], out: Path, *, max_new_usd: float, co
     counts = Counter()
     stopping = False
     work = iter(packets)
+    request_locks: dict[str, asyncio.Lock] = {}
+    model_start_locks: dict[str, asyncio.Lock] = {}
+    model_next_start: dict[str, float] = {}
+    clock = asyncio.get_running_loop().time
     cache = ROOT / "data/interim/action_choice_cache"
     cache.mkdir(parents=True, exist_ok=True)
     headers = {"Authorization": "Bearer " + api_key(key_source),
@@ -57,74 +71,86 @@ async def run_requests(packets: list[dict], out: Path, *, max_new_usd: float, co
                         return
                     payload = packet["request"]
                     key = digest(payload)
-                    path = cache / (key + ".json.gz")
-                    cached = path.exists() and not refresh
-                    if cached:
-                        record = json.loads(gzip.decompress(path.read_bytes()))
-                        assert record["request"] == payload and record["request_key"] == key
-                        if transient_provider_error(record["response"]):
-                            cached = False
-                            counts["cached_infrastructure_errors_retried"] += 1
-                    if cached:
-                        counts["cache_hits"] += 1
-                    else:
-                        assert project_before + new + reserved + outstanding(ROOT) + RESERVATION <= 70, "Cumulative project cap $70 reached"
-                        assert scope_before + new + reserved + outstanding(ROOT, SCOPE) + RESERVATION <= 3, "Evaluation scope cap $3 (including expanded run, pilots and replays) reached"
-                        assert new + reserved + RESERVATION <= max_new_usd, "This evaluation run's cap reached"
-                        reserved += RESERVATION
-                        try:
-                            for attempt in range(4):
-                                event = {"time": datetime.now(timezone.utc).isoformat(), "request_key": key,
-                                         "metadata": packet["metadata"], "attempt": attempt, "request": payload}
-                                counts["http_attempts"] += 1
-                                try:
-                                    response = await client.post("https://openrouter.ai/api/v1/chat/completions", json=payload)
-                                except httpx.TransportError as error:
-                                    event["error"] = repr(error)
+                    async with request_locks.setdefault(key, asyncio.Lock()):
+                        path = cache / (key + ".json.gz")
+                        cached = path.exists() and not refresh
+                        if cached:
+                            record = json.loads(gzip.decompress(path.read_bytes()))
+                            assert record["request"] == payload and record["request_key"] == key
+                            if transient_provider_error(record["response"]):
+                                cached = False
+                                counts["cached_infrastructure_errors_retried"] += 1
+                        if cached:
+                            counts["cache_hits"] += 1
+                        else:
+                            assert project_before + new + reserved + outstanding(ROOT) + RESERVATION <= PROJECT_CAP_USD, "Cumulative project cap reached"
+                            assert scope_before + new + reserved + outstanding(ROOT, SCOPE) + RESERVATION <= EVALUATION_CAP_USD, "Evaluation scope cap reached"
+                            assert new + reserved + RESERVATION <= max_new_usd, "This evaluation run's cap reached"
+                            reserved += RESERVATION
+                            try:
+                                for attempt in range(4):
+                                    async with model_start_locks.setdefault(payload["model"], asyncio.Lock()):
+                                        while (delay := model_next_start.get(payload["model"], 0) - clock()) > 0:
+                                            await asyncio.sleep(delay)
+                                        model_next_start[payload["model"]] = clock() + packet["metadata"].get("minimum_request_interval_seconds", 0)
+                                    assert project_before + new + reserved + outstanding(ROOT) <= PROJECT_CAP_USD, "Project cap reached during retries"
+                                    assert scope_before + new + reserved + outstanding(ROOT, SCOPE) <= EVALUATION_CAP_USD, "Evaluation cap reached during retries"
+                                    event = {"time": datetime.now(timezone.utc).isoformat(), "request_key": key,
+                                             "metadata": packet["metadata"], "attempt": attempt, "request": payload}
+                                    counts["http_attempts"] += 1
+                                    try:
+                                        response = await client.post("https://openrouter.ai/api/v1/chat/completions", json=payload)
+                                    except httpx.TransportError as error:
+                                        event["error"] = repr(error)
+                                        if not isinstance(error, (httpx.ConnectError, httpx.ConnectTimeout)):
+                                            reserve_unknown_fee(event, out)
+                                        with (out / "events.jsonl").open("a") as stream:
+                                            stream.write(json.dumps(event, ensure_ascii=False) + "\n")
+                                        raise
+                                    event |= {"http_status": response.status_code, "response_headers": dict(response.headers), "response_text": response.text}
                                     with (out / "events.jsonl").open("a") as stream:
                                         stream.write(json.dumps(event, ensure_ascii=False) + "\n")
-                                    raise
-                                event |= {"http_status": response.status_code, "response_text": response.text}
-                                with (out / "events.jsonl").open("a") as stream:
-                                    stream.write(json.dumps(event, ensure_ascii=False) + "\n")
-                                if (response.status_code in {408, 429} or 500 <= response.status_code < 600) and attempt < 3:
-                                    await asyncio.sleep(2 ** attempt)
-                                    continue
-                                if response.status_code == 200 or response.headers.get("content-type", "").startswith("application/json"):
-                                    body = response.json()
-                                else:
-                                    body = {"error": {"message": response.text}}
-                                if "usage" in body and "cost" in body["usage"]:
-                                    charge = body["usage"]["cost"]
-                                    assert type(charge) in (int, float) and math.isfinite(charge) and charge >= 0
-                                    new += charge
-                                    with ledger.open("a") as stream:
-                                        stream.write(json.dumps({"time": event["time"], "request_key": key,
-                                            "response_id": body["id"], "cost_usd": charge, "model": body["model"],
-                                            "run": str(out), "scope": SCOPE}) + "\n")
-                                    assert charge <= RESERVATION, "Charge exceeded reservation; stopping before more work"
-                                elif response.status_code == 200 and "error" not in body:
-                                    raise ValueError("Successful chat response lacks an actual cost receipt")
-                                provider_timeout = response.status_code == 200 and transient_provider_error(body)
-                                if provider_timeout and attempt < 3:
-                                    await asyncio.sleep(2 ** attempt)
-                                    continue
-                                record = {"request_key": key, "request": payload, "http_status": response.status_code, "response": body}
-                                counts["new_requests"] += 1
-                                if response.status_code == 200 and not provider_timeout:
-                                    temporary = path.with_suffix(".tmp")
-                                    temporary.write_bytes(gzip.compress(json.dumps(record, ensure_ascii=False).encode()))
-                                    temporary.replace(path)
-                                break
-                        finally:
-                            reserved -= RESERVATION
-                    receipts.write(json.dumps(record | {"metadata": packet["metadata"], "cache_hit": cached}, ensure_ascii=False) + "\n")
-                    receipts.flush()
-                    counts["completed"] += 1
-                    if counts["completed"] == 1:
-                        logger.debug("## First complete request/reply\n\n```json\n" + json.dumps(record, ensure_ascii=False, indent=2) + "\n```\n")
-                    if counts["completed"] % 100 == 0:
-                        logger.info(f"Completed {counts['completed']}/{len(packets)} requests; new cost ${new:.5f}; cumulative ${project_before + new:.5f}.")
+                                    if response.status_code == 200 or response.headers.get("content-type", "").startswith("application/json"):
+                                        body = response.json()
+                                    else:
+                                        body = {"error": {"message": response.text}}
+                                    if "usage" in body and "cost" in body["usage"]:
+                                        charge = body["usage"]["cost"]
+                                        assert type(charge) in (int, float) and math.isfinite(charge) and charge >= 0
+                                        new += charge
+                                        with ledger.open("a") as stream:
+                                            stream.write(json.dumps({"time": event["time"], "request_key": key,
+                                                "response_id": body["id"], "cost_usd": charge, "model": body["model"],
+                                                "run": str(out), "scope": SCOPE}) + "\n")
+                                        assert charge <= RESERVATION, "Charge exceeded reservation; stopping before more work"
+                                    elif response.status_code == 200 and "error" not in body:
+                                        reserve_unknown_fee(event, out)
+                                        raise ValueError("Successful chat response lacks an actual cost receipt")
+                                    elif response.status_code in {408, 504} or ("error" in body and body["error"].get("code") in {408, 504}):
+                                        reserve_unknown_fee(event, out)
+                                    provider_timeout = response.status_code == 200 and transient_provider_error(body)
+                                    rate_limited = response.status_code == 429 or ("error" in body and body["error"].get("code") == 429)
+                                    if rate_limited:
+                                        model_next_start[payload["model"]] = max(model_next_start[payload["model"]], clock() + 30)
+                                    if (response.status_code in {408, 429} or 500 <= response.status_code < 600 or provider_timeout) and attempt < 3:
+                                        await asyncio.sleep(2 ** attempt)
+                                        continue
+                                    record = {"request_key": key, "request": payload, "http_status": response.status_code, "response": body}
+                                    counts["new_requests"] += 1
+                                    if response.status_code == 200 and not provider_timeout and cache_write:
+                                        temporary = path.with_suffix(".tmp")
+                                        temporary.write_bytes(gzip.compress(json.dumps(record, ensure_ascii=False).encode()))
+                                        temporary.replace(path)
+                                    break
+                            finally:
+                                reserved -= RESERVATION
+                        receipts.write(json.dumps(record | {"metadata": packet["metadata"], "cache_hit": cached}, ensure_ascii=False) + "\n")
+                        receipts.flush()
+                        counts["completed"] += 1
+                        if counts["completed"] == 1:
+                            logger.debug("## First complete request/reply\n\n```json\n" + json.dumps(record, ensure_ascii=False, indent=2) + "\n```\n")
+                        if counts["completed"] % 100 == 0:
+                            logger.info(f"Completed {counts['completed']}/{len(packets)} requests; new cost ${new:.5f}; cumulative ${project_before + new:.5f}.")
             tasks = [asyncio.create_task(worker()) for _ in range(concurrency)]
             try:
                 await asyncio.gather(*tasks)

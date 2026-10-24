@@ -4,6 +4,9 @@ import json
 import math
 from pathlib import Path
 
+PROJECT_CAP_USD = 80
+EVALUATION_CAP_USD = 10.25
+
 
 def unknown_fees(root: Path, scope: str | None = None) -> float:
     path = root / ".local/billing_reservations.json"
