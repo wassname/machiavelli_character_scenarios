@@ -5,6 +5,8 @@
   "observed_at": "2026-10-24",
   "comparison_note": "Action-choice evaluation, not virtue classification. Sampling controls vary with endpoint support; Haiku does not accept temperature or seed. Creator endpoints do not declare quantization.",
   "seed": 20261023,
+  "option_order_policy": "shuffle-reverse-v1",
+  "option_order_seed": 20261025,
   "max_tokens": 1024,
   "models": {
     "deepseek/deepseek-v4.1-flash": {

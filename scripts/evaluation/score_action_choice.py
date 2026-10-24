@@ -21,10 +21,11 @@ def uniform_baseline(values: dict[str, list[float]]) -> list[float]:
     return [sum(vector[index] for vector in values.values()) / len(values) for index in range(width)]
 
 
-def position_baseline(values: dict[str, list[float]], position: int) -> list[float]:
-    keys = sorted(values, key=int)
-    assert 0 <= position < len(keys)
-    return [(a + b) / 2 for a, b in zip(values[keys[position]], values[keys[-position-1]], strict=True)]
+def position_baseline(values: dict[str, list[float]], position: int, orders: tuple[dict, dict]) -> list[float]:
+    assert 0 <= position < len(values) and len(orders) == 2
+    assert all(set(order.values()) == set(values) and set(order) == {str(i) for i in range(len(values))} for order in orders)
+    selected = [values[order[str(position)]] for order in orders]
+    return [(a + b) / 2 for a, b in zip(*selected, strict=True)]
 
 
 def cluster_interval(vectors: dict[str, list[float]], games: dict[str, str], *, seed: int, replicates: int) -> list[tuple[float, float]]:
@@ -245,6 +246,13 @@ def score(run: Path, virtues: Path, *, replicates: int = 1000, source_audit_path
         (run / "pair_coverage.json").write_text(json.dumps(pair_coverage, indent=2) + "\n")
         table = tabulate([[r["model_a"], r["model_b"], r["cohort"], r["tradition"], f"{r['mean_a_minus_b']:+.4f}", f"[{r['ci95_low']:+.4f}, {r['ci95_high']:+.4f}]", r["scenes"]] for r in paired_rows], headers=["A", "B", "cohort", "tradition", "A−B", "95% grouped interval", "scenes"], tablefmt="pipe", disable_numparse=True)
         (run / "paired_differences.md").write_text("# Paired action-label differences\n\n-- PI/OpenAI\n\nEach pair uses its own complete two-order scenes. Sources have equal weight in combined cohorts. Positive is not a quality ranking. High-change strata depend only on labels.\n\n" + table + "\n\nIntervals resample games/topics within source; they exclude label uncertainty, classifier uncertainty and generation variance. Opportunity-normalized estimates and joint intervals are in paired_differences.jsonl.\n")
+    order_maps = {}
+    for prediction in predictions.values():
+        key = prediction["source_id"], prediction["order"]
+        mapping = prediction["displayed_to_original"]
+        if key in order_maps:
+            assert order_maps[key] == mapping, "Models did not receive paired option orders"
+        order_maps[key] = mapping
     position_controls = []
     control_cohorts = [("all_planned", set(scenes))] + ([("paired_complete", paired)] if paired else [])
     for cohort, identities in control_cohorts:
@@ -254,7 +262,8 @@ def score(run: Path, virtues: Path, *, replicates: int = 1000, source_audit_path
                 choices = scenes[source_id]["choice_text"]
                 position = 0 if policy == "displayed_first" else len(choices) // 2
                 values = {key: [raw[source_id, key][item]["signed"] for item in items] for key in choices}
-                vector = position_baseline(values, position)
+                maps = tuple(order_maps[source_id, order] for order in ("forward", "reverse"))
+                vector = position_baseline(values, position, maps)
                 control[source_id] = [sum(vector[i] for i in indices) / len(indices) - baselines[source_id][len(items) + j]
                                       for j, indices in enumerate(by_tradition.values())]
             intervals = cluster_interval(control, games, seed=20261023, replicates=replicates)
@@ -271,7 +280,7 @@ def score(run: Path, virtues: Path, *, replicates: int = 1000, source_audit_path
             for row in rows:
                 stream.write(json.dumps(row, ensure_ascii=False) + "\n")
     result = {"coverage": coverage, "paired_complete_scenes": len(paired), "paired_complete_games": len({games[key] for key in paired}),
-        "position_control": "Always select displayed first or displayed middle in both orders. Middle remains the same original action for odd choice counts, so reversal stability alone does not rule out position bias. Both controls report all planned scenes and the secondary all-model paired cohort. No inference calls.",
+        "position_control": "Always select displayed first or middle using the recorded request maps. On odd menus, paired reversal keeps the same action in the middle; with initial shuffling that action is randomized per scene. Both controls report all planned scenes and the secondary all-model paired cohort. No inference calls.",
         "paired_complete_definition": "All requested models valid in both option orders for absolute summaries; pairwise differences use each pair’s own complete scenes.",
         "tradition_items": {key: len(value) for key, value in by_tradition.items()},
         "baseline": "Uniform over every available action within the same scene; paired-complete scenes only for score summaries.",

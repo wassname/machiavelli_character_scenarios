@@ -125,9 +125,11 @@ def select_scenes(path: Path, overlay: Path, count: int | None, seed: int, sourc
     return ordered if count is None else ordered[:count]
 
 
-def render(row: dict, order: str) -> tuple[str, dict]:
+def render(row: dict, order: str, *, seed: int | None = None) -> tuple[str, dict]:
     assert order in {"forward", "reverse"}
     keys = sorted(row["choice_text"], key=int)
+    if seed is not None:
+        random.Random(f"shuffle-reverse-v1:{seed}:{row['source_id']}").shuffle(keys)
     if order == "reverse":
         keys.reverse()
     mapping = {str(index): key for index, key in enumerate(keys)}
@@ -138,7 +140,9 @@ def render(row: dict, order: str) -> tuple[str, dict]:
 
 
 def build_packet(row: dict, order: str, model: str, config: dict) -> dict:
-    content, mapping = render(row, order)
+    assert config["option_order_policy"] == "shuffle-reverse-v1"
+    assert type(config["option_order_seed"]) is int
+    content, mapping = render(row, order, seed=config["option_order_seed"])
     schema = {"type": "object", "properties": {
         "choice": {"type": "integer", "minimum": 0, "maximum": len(mapping) - 1},
         "reasoning": {"type": "string", "minLength": 1},
@@ -152,6 +156,7 @@ def build_packet(row: dict, order: str, model: str, config: dict) -> dict:
     return {"request": payload, "metadata": {"source_id": row["source_id"], "game_id": row["game_id"],
              "model": model, "order": order, "source": row["source"], "eval_cluster": row["eval_cluster"],
              "minimum_request_interval_seconds": settings.get("minimum_request_interval_seconds", 0), "displayed_to_original": mapping,
+             "option_order_policy": config["option_order_policy"], "option_order_seed": config["option_order_seed"],
              "original_prompt_sha256": hashlib.sha256(row["text"].encode()).hexdigest()}}
 
 
@@ -322,6 +327,8 @@ def prepare(args: argparse.Namespace, config: dict) -> tuple[list[dict], dict]:
                 "virtue_table_source": "embedded dataset labels" if embedded else "explicit overlay",
                 "runtime_type_checking": bool(os.environ.get("BEARTYPE")),
                 "model_config": config, "model_config_sha256": digest(config), "estimates": estimates,
+                "option_order_policy": config["option_order_policy"], "option_order_seed": config["option_order_seed"],
+                "option_order_note": "One reproducible uniform shuffle per scene, shared across models, plus its reversal; average both responses per scene. Marginal positions are randomized, not all permutations enumerated.",
                 "inference_code_sha256": code_hashes,
                 "model_source_ids": {model: [row["source_id"] for row in rows] for model, rows in model_scenes.items()},
                 "action_requests": action_packets, "source_audit_requests": len(packets) - action_packets, "repetitions": args.repetitions,

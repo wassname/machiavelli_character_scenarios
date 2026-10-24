@@ -42,7 +42,7 @@ def main() -> None:
     old = "Actions to choose:\n" + row["actions_text"] + "\n\n"
     prefix, suffix = row["text"].split(old)
     for order in ("forward", "reverse"):
-        consumed, mapping = render(row, order)
+        consumed, mapping = render(row, order, seed=config["option_order_seed"])
         assert consumed.startswith(prefix) and consumed.endswith(suffix)
         assert all(consumed.count(f"{i}: {row['choice_text'][key]}") == 1 for i, key in mapping.items())
     response = {"model": model, "provider": "DeepInfra", "usage": {"cost": 0}, "choices": [{
@@ -107,8 +107,26 @@ def main() -> None:
     assert repeated_choice_gap(["a", "b"], ["a", "b"]) == [.5, 1., -.5]
     null_draws = [list(draw) for draw in product("ab", repeat=3)]
     assert abs(sum(repeated_choice_gap(a, b)[2] for a in null_draws for b in null_draws)) < 1e-12
-    assert position_baseline({"0": [0.], "1": [1.], "2": [0.]}, 0) == [0.]
-    assert position_baseline({"0": [0.], "1": [1.], "2": [0.]}, 1) == [1.]
+    legacy_maps = ({"0": "0", "1": "1", "2": "2"}, {"0": "2", "1": "1", "2": "0"})
+    assert position_baseline({"0": [0.], "1": [1.], "2": [0.]}, 0, legacy_maps) == [0.]
+    assert position_baseline({"0": [0.], "1": [1.], "2": [0.]}, 1, legacy_maps) == [1.]
+    shuffled_maps = ({"0": "2", "1": "0", "2": "1"}, {"0": "1", "1": "0", "2": "2"})
+    assert position_baseline({"0": [0.], "1": [1.], "2": [5.]}, 0, shuffled_maps) == [3.]
+    assert position_baseline({"0": [0.], "1": [1.], "2": [5.]}, 1, shuffled_maps) == [0.]
+    probe = row | {"source_id": "order-probe", "choice_text": {"0": "Help.", "1": "Refuse.", "2": "Wait."},
+                   "actions_text": "- Help.\n- Refuse.\n- Wait.",
+                   "text": "A decision.\n\nActions to choose:\n- Help.\n- Refuse.\n- Wait.\n\nChoose one."}
+    order_seed = config["option_order_seed"]
+    original = render(probe, "forward", seed=order_seed)
+    assert list(original[1].values()) == list(render(probe, "reverse", seed=order_seed)[1].values())[::-1]
+    middles = {render(probe | {"source_id": f"order-probe-{i}"}, "forward", seed=order_seed)[1]["1"] for i in range(60)}
+    assert middles == set(probe["choice_text"]), "Original middle remains fixed across initial shuffles"
+    assert render(probe, "forward", seed=order_seed) == original, "Ordering depends on intervening scenes"
+    assert any(render(probe, "forward", seed=i)[1] != original[1] for i in range(10)), "Seed is ignored"
+    for name in config["models"]:
+        packet = build_packet(probe, "forward", name, config)
+        assert packet["metadata"]["displayed_to_original"] == original[1], "Models got different display orders"
+        assert packet["request"]["messages"][1]["content"] == original[0]
     baseline = uniform_baseline(values)
     assert all(abs(sum(vector[i] - baseline[i] for vector in values.values())) < 1e-12 for i in range(2))
     assert cluster_interval({"a": [0., 0.], "b": [0., 0.]}, {"a": "game1", "b": "game2"}, seed=1, replicates=100) == [(0., 0.), (0., 0.)]
