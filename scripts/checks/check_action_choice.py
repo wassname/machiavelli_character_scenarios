@@ -14,7 +14,7 @@ import httpx
 import pyarrow.parquet as pq
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "evaluation"))
-from action_choice import MODEL_PATH, ROOT, build_packet, embedded_overlay, parse_receipt, render, select_scenes, scene_spread, build_scope_packet
+from action_choice import MODEL_PATH, ROOT, build_packet, embedded_overlay, parse_receipt, render, select_scenes, scene_spread, build_scope_packet, repeat_summary
 from score_action_choice import uniform_baseline, cluster_interval, paired_summary
 import eval_api
 from eval_api import api_key, transient_provider_error
@@ -84,6 +84,18 @@ def main() -> None:
         assert all(packet["request"][key] == value for key, value in settings["sampling_parameters"].items())
         assert ("temperature" in packet["request"]) == ("temperature" in settings["sampling_parameters"])
     assert parsed["provider_message"] == response["choices"][0]["message"]
+    repeats = [{"model": model, "source": "synthetic", "source_id": "one", "order": order, "repetition": repetition,
+                "cache_hit": False, "request_key": order, "status": "ok", "original_choice_id": "a"}
+               for order in ("forward", "reverse") for repetition in range(3)]
+    assert repeat_summary(repeats, 3)[0]["same_prompt_disagreements"] == 0
+    repeats[0]["original_choice_id"] = "b"
+    repeated = repeat_summary(repeats, 3)[0]
+    assert repeated["same_prompt_disagreements"] == 2 and repeated["same_prompt_pairs"] == 6
+    assert repeated["order_disagreements"] == 1 and repeated["order_pairs"] == 3
+    repeats[0]["status"] = "transport_error"
+    repeated = repeat_summary(repeats, 3)[0]
+    assert repeated["complete_conditions"] == 1 and repeated["same_prompt_pairs"] == 4 and repeated["order_pairs"] == 2
+    assert repeated["status_counts"]["transport_error"] == 1
     values = {"a": [-1., .3], "b": [1., .5], "c": [.6, -.5]}
     baseline = uniform_baseline(values)
     assert all(abs(sum(vector[i] - baseline[i] for vector in values.values())) < 1e-12 for i in range(2))
@@ -130,6 +142,14 @@ def main() -> None:
             assert len(network_calls) == 1 and result["cache_hits"] == 1 and result["new_cost_usd"] == .001
             eval_api.reserve_unknown_fee({"request_key": "offline", "time": "one", "attempt": 0}, out)
             assert unknown_fees(root, eval_api.SCOPE) == eval_api.RESERVATION
+            cache_path = next((root / "data/interim/action_choice_cache").glob("*.json.gz"))
+            cached_bytes = cache_path.read_bytes()
+            fresh_out = root / "fresh"
+            fresh_out.mkdir()
+            previous_calls = len(network_calls)
+            fresh = asyncio.run(eval_api.run_requests([forward] * 3, fresh_out, max_new_usd=.1, concurrency=3, refresh=True, cache_write=False))
+            assert len(network_calls) - previous_calls == fresh["new_requests"] == 3 and fresh.get("cache_hits", 0) == 0
+            assert cache_path.read_bytes() == cached_bytes
     async def check_model_fairness():
         ready = asyncio.Event()
         async def respond_fair(request):

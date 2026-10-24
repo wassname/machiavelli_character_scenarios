@@ -2,7 +2,8 @@
 
 import argparse
 import asyncio
-from collections import Counter
+from collections import Counter, defaultdict
+from itertools import combinations
 import fcntl
 import hashlib
 import json
@@ -226,6 +227,44 @@ def parse_receipt(record: dict, config: dict) -> dict:
                               "reasoning_sentences_heuristic": sentences}
 
 
+def repeat_summary(records: list[dict], repetitions: int) -> list[dict]:
+    groups = defaultdict(list)
+    orders = defaultdict(dict)
+    totals = {}
+    assert repetitions > 1 and all(not row["cache_hit"] for row in records), "Repeat controls require fresh replies"
+    for row in records:
+        key = row["model"], row["source"]
+        if key not in totals:
+            totals[key] = {"model": key[0], "source": key[1], "conditions": 0, "complete_conditions": 0,
+                           "status_counts": Counter(), "same_prompt_pairs": 0, "same_prompt_disagreements": 0,
+                           "order_pairs": 0, "order_disagreements": 0}
+        totals[key]["status_counts"][row["status"]] += 1
+        groups[key + (row["source_id"], row["order"])].append(row)
+        trial = orders[key + (row["source_id"], row["repetition"])]
+        assert row["order"] not in trial
+        trial[row["order"]] = row
+    for key, rows in groups.items():
+        assert {row["repetition"] for row in rows} == set(range(repetitions)) and len(rows) == repetitions
+        assert len({row["request_key"] for row in rows}) == 1, "Repeat payload changed"
+        total = totals[key[:2]]
+        total["conditions"] += 1
+        total["complete_conditions"] += all(row["status"] == "ok" for row in rows)
+        for a, b in combinations([row for row in rows if row["status"] == "ok"], 2):
+            total["same_prompt_pairs"] += 1
+            total["same_prompt_disagreements"] += a["original_choice_id"] != b["original_choice_id"]
+    for key, trial in orders.items():
+        assert set(trial) == {"forward", "reverse"}
+        if all(row["status"] == "ok" for row in trial.values()):
+            total = totals[key[:2]]
+            total["order_pairs"] += 1
+            total["order_disagreements"] += trial["forward"]["original_choice_id"] != trial["reverse"]["original_choice_id"]
+    for total in totals.values():
+        total["same_prompt_disagreement_rate"] = total["same_prompt_disagreements"] / total["same_prompt_pairs"] if total["same_prompt_pairs"] else None
+        total["order_disagreement_rate"] = total["order_disagreements"] / total["order_pairs"] if total["order_pairs"] else None
+        total["limits"] = "Descriptive repeated-prompt diagnostic, not independent pair trials or a quality score. Missing replies retain status counts and never become actions."
+    return list(totals.values())
+
+
 def prepare(args: argparse.Namespace, config: dict) -> tuple[list[dict], dict]:
     snapshot = args.out / "inference_source"
     code_hashes = {}
@@ -259,6 +298,9 @@ def prepare(args: argparse.Namespace, config: dict) -> tuple[list[dict], dict]:
             model_scenes[model] = scenes
         assert model_scenes[model], "No scenes meet this model's declared cohort"
     packets = [build_packet(row, order, model, config) for model, rows in model_scenes.items() for row in rows for order in ("forward", "reverse")]
+    if args.repetitions > 1:
+        packets = [{"request": packet["request"], "metadata": packet["metadata"] | {"repetition": repetition}}
+                   for repetition in range(args.repetitions) for packet in packets]
     action_packets = len(packets)
     if args.audit_inputs_only:
         packets, model_scenes = [], {}
@@ -269,7 +311,7 @@ def prepare(args: argparse.Namespace, config: dict) -> tuple[list[dict], dict]:
     estimates = {}
     for model, settings in config["models"].items():
         selected = [packet for packet in packets if packet["metadata"]["model"] == model]
-        uncached = [packet for packet in selected if not (ROOT / "data/interim/action_choice_cache" / (digest(packet["request"]) + ".json.gz")).exists()]
+        uncached = selected if args.refresh else [packet for packet in selected if not (ROOT / "data/interim/action_choice_cache" / (digest(packet["request"]) + ".json.gz")).exists()]
         characters = sum(len(json.dumps(packet["request"], ensure_ascii=False)) for packet in uncached)
         estimates[model] = {"requests": len(selected), "expected_cache_hits": len(selected) - len(uncached), "expected_new_requests": len(uncached), "serialized_characters": characters,
             "central_usd": (characters / 4 * settings["input_usd_per_million"] + sum(1024 if packet["metadata"].get("task_kind") == "source_scope" else 256 for packet in uncached) * settings["output_usd_per_million"]) / 1e6,
@@ -282,7 +324,7 @@ def prepare(args: argparse.Namespace, config: dict) -> tuple[list[dict], dict]:
                 "model_config": config, "model_config_sha256": digest(config), "estimates": estimates,
                 "inference_code_sha256": code_hashes,
                 "model_source_ids": {model: [row["source_id"] for row in rows] for model, rows in model_scenes.items()},
-                "action_requests": action_packets, "source_audit_requests": len(packets) - action_packets,
+                "action_requests": action_packets, "source_audit_requests": len(packets) - action_packets, "repetitions": args.repetitions,
                 "source_audit_model": args.audit_model if args.audit_inputs or args.audit_inputs_only else None,
                 "source_audit_protocol": SCOPE_PROTOCOL,
                 "source_audit_limits": "Source-only model screening, not human-adjudicated validity. No action preferences or virtue labels supplied; use flags for separate sensitivity analyses, not silent source/label repair.",
@@ -306,6 +348,7 @@ def main() -> None:
     parser.add_argument("--no-cache-write", action="store_true", help="Keep fresh diagnostic replicates out of the shared cache")
     parser.add_argument("--virtues", type=Path, help="Optional choice-level overlay; otherwise read the dataset's embedded virtue labels")
     parser.add_argument("--count", type=int, help="Omit to evaluate every fully labelled scene")
+    parser.add_argument("--repetitions", type=int, default=1, help="Fresh same-prompt diagnostic draws; requires --refresh --no-cache-write")
     parser.add_argument("--source", choices=["both", "machiavelli", "daily_dilemmas"], default="both")
     parser.add_argument("--seed", type=int, default=20261023)
     parser.add_argument("--allow-paid", action="store_true")
@@ -315,6 +358,9 @@ def main() -> None:
     parser.add_argument("--concurrency", type=int, default=8)
     parser.add_argument("--out", type=Path, required=True)
     args = parser.parse_args()
+    assert args.repetitions > 0
+    if args.repetitions > 1:
+        assert args.refresh and args.no_cache_write and not (args.audit_inputs or args.audit_inputs_only), "Repeated actions need fresh, non-cache-writing calls and no source audit"
     args.out.mkdir(parents=True, exist_ok=False)
     logger.remove()
     logger.add(sys.stdout, level="INFO", format="{message}\n", colorize=False)
@@ -332,12 +378,15 @@ def main() -> None:
                 result = asyncio.run(run_requests(packets, args.out, max_new_usd=args.max_new_usd,
                                                  concurrency=args.concurrency, key_source=args.key_source, refresh=args.refresh, cache_write=not args.no_cache_write))
             parsed = [parse_receipt(json.loads(line), config) for line in (args.out / "receipts.jsonl").open()]
+            assert len(parsed) == manifest["requests"], "Missing native receipt"
             for filename, kind in (("choices.jsonl", "action"), ("source_scope.jsonl", "source_scope")):
                 with (args.out / filename).open("w") as stream:
                     for row in parsed:
                         if row.get("task_kind", "action") == kind:
                             stream.write(json.dumps(row, ensure_ascii=False) + "\n")
             result["status_counts"] = dict(Counter(row["status"] for row in parsed))
+            if args.repetitions > 1:
+                (args.out / "repeat_control_summary.json").write_text(json.dumps(repeat_summary(parsed, args.repetitions), indent=2) + "\n")
         (args.out / "summary.json").write_text(json.dumps(result, indent=2) + "\n")
         logger.info("## Result\n\n```json\n" + json.dumps(result, indent=2) + f"\n```\n\nElapsed: {time.monotonic()-started:.1f}s.\n\n{args.out / 'run.md'}\n")
     except Exception:
