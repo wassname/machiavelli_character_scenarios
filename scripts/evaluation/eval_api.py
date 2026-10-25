@@ -4,6 +4,7 @@ import asyncio
 import base64
 from collections import Counter
 from datetime import datetime, timezone
+import functools
 import gzip
 import hashlib
 import json
@@ -16,10 +17,10 @@ from loguru import logger
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "scripts/data"))
-from billing_reservations import outstanding, unknown_fees, noncash_reviews, PROJECT_CAP_USD, EVALUATION_CAP_USD
+from billing_reservations import outstanding, unknown_fees, noncash_reviews, PROJECT_CAP_USD, EVALUATION_CAP_USD, EVALUATION_SCOPE
 from label_actions import api_key
 
-SCOPE = "action-choice-eval-v1"
+SCOPE = EVALUATION_SCOPE
 RESERVATION = .01
 
 
@@ -69,9 +70,10 @@ async def run_requests(packets: list[dict], out: Path, *, max_new_usd: float, co
     clock = asyncio.get_running_loop().time
     cache = ROOT / "data/interim/action_choice_cache"
     cache.mkdir(parents=True, exist_ok=True)
-    headers = {"Authorization": "Bearer " + api_key(key_source),
-               "X-OpenRouter-Title": "virtue-choices/action-choice-eval"}
-    async with httpx.AsyncClient(headers=headers, timeout=180) as client:
+    @functools.cache
+    def authorization() -> dict[str, str]:
+        return {"Authorization": "Bearer " + api_key(key_source)}
+    async with httpx.AsyncClient(headers={"X-OpenRouter-Title": "virtue-choices/action-choice-eval"}, timeout=180) as client:
         with (out / "receipts.jsonl").open("w") as receipts:
             async def worker(model_work):
                 nonlocal new, reserved
@@ -110,7 +112,7 @@ async def run_requests(packets: list[dict], out: Path, *, max_new_usd: float, co
                                     chunks = []
                                     try:
                                         async with capacity:
-                                            async with client.stream("POST", "https://openrouter.ai/api/v1/chat/completions", json=payload) as response:
+                                            async with client.stream("POST", "https://openrouter.ai/api/v1/chat/completions", json=payload, headers=authorization()) as response:
                                                 event |= {"http_status": response.status_code, "response_headers": dict(response.headers)}
                                                 async for chunk in response.aiter_bytes():
                                                     chunks.append(chunk)
@@ -140,7 +142,11 @@ async def run_requests(packets: list[dict], out: Path, *, max_new_usd: float, co
                                     with (out / "events.jsonl").open("a") as stream:
                                         stream.write(json.dumps(event, ensure_ascii=False) + "\n")
                                     if response.status_code == 200 or response.headers.get("content-type", "").startswith("application/json"):
-                                        body = json.loads(event["response_text"])
+                                        try:
+                                            body = json.loads(event["response_text"])
+                                        except json.JSONDecodeError:
+                                            reserve_unknown_fee(event, out)
+                                            raise
                                     else:
                                         body = {"error": {"message": event["response_text"]}}
                                     if "usage" in body and "cost" in body["usage"]:
@@ -190,6 +196,9 @@ async def run_requests(packets: list[dict], out: Path, *, max_new_usd: float, co
                 raise
     assert counts["completed"] == len(packets)
     return dict(counts) | {"new_cost_usd": new, "project_total_usd": project_before + new,
-                           "evaluation_scope_usd": scope_before + new, "unbilled_cost_reserved_usd": unknown_fees(ROOT),
+                           "evaluation_scope_usd": scope_before + new,
+                           "evaluation_scope_native_estimates_usd": noncash_reviews(ROOT, SCOPE),
+                           "evaluation_scope_conservative_total_usd": scope_before + new + outstanding(ROOT, SCOPE),
+                           "unbilled_cost_reserved_usd": unknown_fees(ROOT),
                            "noncash_review_estimate_usd": noncash_reviews(ROOT),
                            "conservative_budget_total_usd": project_before + new + outstanding(ROOT), "scope": SCOPE}

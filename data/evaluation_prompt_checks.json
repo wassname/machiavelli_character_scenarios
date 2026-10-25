@@ -1,0 +1,38 @@
+{
+  "author": "PI/OpenAI",
+  "protocol": "own-judgement-v4",
+  "model": "deepseek/deepseek-v4.1-flash",
+  "meaning": "Request hashes from the tested pinned-endpoint actor probe, including both orders. Match complete source facts, wrapper, system instruction, schema and reasoning/sampling settings; not a guarantee of output or intrinsic preferences.",
+  "checks": [
+    {
+      "source_id": "machiavelli_alexandria_Choice_of_Alexandria-siege_545-88",
+      "order": "forward",
+      "request_sha256": "ff8a0937ccf79428770414f265e551cc7619e51b0b17fb590347644d3bbf5136"
+    },
+    {
+      "source_id": "machiavelli_alexandria_Choice_of_Alexandria-siege_545-88",
+      "order": "reverse",
+      "request_sha256": "3de50d4eb6bf95195d06be77ab2768139fd1091394a90ae1d397e875958a6e28"
+    },
+    {
+      "source_id": "machiavelli_champion-of-the-gods_Champion_of_the_Gods-the_oracle_and_the_aftermath_265-3484",
+      "order": "forward",
+      "request_sha256": "d76d6a02ca6a9b876067fadc1112bf4424fb3c5131551dc92ddf0ba721459227"
+    },
+    {
+      "source_id": "daily_dilemmas_45117",
+      "order": "forward",
+      "request_sha256": "4c9c8d9d6586179da8b1c7a55660f73972b9a114d6c8274b5edde00061c12415"
+    },
+    {
+      "source_id": "machiavelli_champion-of-the-gods_Champion_of_the_Gods-the_oracle_and_the_aftermath_265-3484",
+      "order": "reverse",
+      "request_sha256": "79af2e4fe4911c206dda1151805b8a9b55b5cafe80b19d02f05b8618cf7d4d07"
+    },
+    {
+      "source_id": "daily_dilemmas_45117",
+      "order": "reverse",
+      "request_sha256": "6ea145da430820df09685fa4e07665c68f85d53baa1ce2ece7722e3801280bc4"
+    }
+  ]
+}

@@ -1,19 +1,19 @@
 {
   "author": "PI/Sol; extended by PI/OpenAI",
   "scope": "action-choice-eval-v1",
-  "protocol": "broad-unscored-vent-v2",
+  "protocol": "own-judgement-v4",
   "observed_at": "2026-10-24",
-  "comparison_note": "Action-choice evaluation, not virtue classification. Sampling controls vary with endpoint support; Haiku does not accept temperature or seed. Creator endpoints do not declare quantization.",
+  "comparison_note": "Action-choice evaluation, not virtue classification. DeepSeek returns native reasoning with a 1024-token budget; the other configured actors have reasoning disabled. Sampling controls vary with endpoint support; Haiku does not accept temperature or seed. Creator endpoints do not declare quantization.",
   "seed": 20261023,
   "option_order_policy": "shuffle-reverse-v1",
   "option_order_seed": 20261025,
-  "max_tokens": 1024,
+  "max_tokens": 2048,
   "models": {
     "deepseek/deepseek-v4.1-flash": {
       "provider": {"only": ["deepinfra/fp8"], "allow_fallbacks": false, "require_parameters": true, "quantizations": ["fp8"]},
       "provider_name": "DeepInfra",
       "sampling_parameters": {"temperature": 0, "seed": 20261023},
-      "reasoning": {"enabled": false},
+      "reasoning": {"enabled": true, "max_tokens": 1024, "exclude": false},
       "input_usd_per_million": 0.14,
       "output_usd_per_million": 0.42,
       "source_audit_parameters": {"reasoning": {"enabled": true, "max_tokens": 1024, "exclude": false}, "max_tokens": 2048},
