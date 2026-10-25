@@ -27,6 +27,11 @@ choice-profiles run="outputs/20261024_action_preferences_resumed" dataset="outpu
     uv run --locked python scripts/checks/check_choice_dimensions.py --analysis "{{out}}/analysis.json" --out "{{out}}/verification.json"
     uv run scripts/evaluation/plot_choice_dimensions.py --analysis "{{out}}/analysis.json" --out "{{out}}"
 
+# PI/OpenAI: Remove the shared label component from saved profiles; no inference.
+choice-pca input="outputs/20261025_individual_dimensions" out="outputs/20261026_pca_profiles" preview=".local/choice_preview":
+    OPENBLAS_NUM_THREADS=1 uv run --locked python scripts/evaluation/pca_choice_profiles.py --input "{{input}}" --out "{{out}}"
+    uv run --script scripts/evaluation/plot_pca_choice_profiles.py --input "{{out}}" --out "{{preview}}"
+
 # PI/OpenAI: Restore displayed choices without model calls.
 prepare out:
     uv run --locked python scripts/data/prepare_inputs.py --out "{{out}}"

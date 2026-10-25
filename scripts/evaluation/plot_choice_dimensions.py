@@ -229,9 +229,10 @@ def render(path: Path, out: Path):
     ranks = " ".join(f"{SOURCES[s]}: " + "; ".join(f"{n} {escape(rank.replace('>', ' > '))}" for rank, n in data['sources'][s]['individual_virtue_rank_counts'].items()) + "." for s in SOURCES)
     factors = "; ".join(f"{SOURCES[s].lower()}: {data['sources'][s]['pc_variance_fractions'][0]:.1%}" for s in SOURCES)
     diagnostic_link = '<a href="diagnostics.html">Read the controlled checks and complete examples.</a>' if (out / "diagnostics.html").exists() else ''
+    pca_link = '<a href="pca.html">PC1 residuals</a>' if (out / "pca.html").exists() else ''
     page = """<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Choice profiles: behaviours, virtues, D&D</title>
 <style>body{font:17px/1.5 system-ui,sans-serif;max-width:1500px;margin:auto;padding:24px;color:#222}h1,h2{font-weight:600}nav{display:flex;gap:24px}img{display:block;width:100%;height:auto}p{max-width:1050px}table{border-collapse:collapse}td,th{padding:7px 14px;border-bottom:1px solid #ddd;text-align:right}td:first-child,th:first-child{text-align:left}details{margin:12px 0}a{color:#246891}.note{color:#555;font-size:15px}</style>
-<h1>Choice profiles</h1><nav><a href="#behaviours">Behaviours</a><a href="#dnd">D&D</a><a href="#virtues">Virtues</a><a href="#audit">Checks and limits</a></nav>
+<h1>Choice profiles</h1><nav><a href="#behaviours">Behaviours</a><a href="#dnd">D&D</a><a href="#virtues">Virtues</a><a href="#audit">Checks and limits</a>""" + pca_link + """</nav>
 <p>These plots use the saved choices of DeepSeek, Gemma and Haiku: """ + source_counts + """, two option orders each. Rebuilding the plots needs no inference. They retain the original role-play prompts and historical pool.</p>
 <p>Known judge misreadings and scenario ambiguity limit what these profiles measure. Treat them as summaries of saved labels, not validated measurements of distinct model virtues. """ + diagnostic_link + """</p>
 <p>Zero in a comparison plot means DeepSeek. Lines show uncertainty in the paired mean, not the spread of individual choices. They omit label error and fresh-generation variability. Click a plot for its SVG.</p>
