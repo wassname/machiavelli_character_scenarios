@@ -12,7 +12,7 @@ from pathlib import Path
 import sys
 import tempfile
 from unittest import TestCase
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import httpx
 import pyarrow.parquet as pq
@@ -24,6 +24,44 @@ import action_choice
 import eval_api
 from eval_api import api_key, transient_provider_error
 from billing_reservations import outstanding, unknown_fees, noncash_reviews
+
+
+async def check_request_caps() -> None:
+    """Stop before a retry or next packet exceeds the run allowance. -- PI/OpenAI"""
+    client = httpx.AsyncClient
+    for mode, cap, packet_count in (("charged_retry", .015, 1), ("uncertain_retry", .015, 1), ("uncertain_next_packet", .02, 2)):
+        attempts = []
+        def respond(request):
+            attempts.append(request)
+            if mode == "charged_retry":
+                return httpx.Response(504, json={"id": f"charged-{len(attempts)}", "model": "offline",
+                    "usage": {"cost": .007}, "error": {"code": 504}})
+            if mode == "uncertain_retry" or len(attempts) == 1:
+                raise httpx.ReadTimeout("offline response timeout", request=request)
+            return httpx.Response(200, json={"id": "recovered", "model": "offline", "usage": {"cost": .001}, "choices": []})
+        packets = [{"request": {"model": "offline", "messages": [], "seed": index}, "metadata": {}}
+                   for index in range(packet_count)]
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            out = root / "out"
+            out.mkdir()
+            with patch.object(eval_api, "ROOT", root), patch.object(eval_api, "api_key", return_value="offline"), \
+                 patch.object(eval_api.httpx, "AsyncClient", side_effect=lambda **kwargs: client(transport=httpx.MockTransport(respond), **kwargs)), \
+                 patch.object(eval_api.asyncio, "sleep", new_callable=AsyncMock):
+                with TestCase().assertRaisesRegex(AssertionError, "This evaluation run's cap reached"):
+                    await eval_api.run_requests(packets, out, max_new_usd=cap, concurrency=1, refresh=True, cache_write=False)
+            expected_attempts = 2 if mode == "uncertain_next_packet" else 1
+            assert len(attempts) == expected_attempts, f"{mode}: HTTP attempt made after run allowance was exhausted"
+            events = [json.loads(line) for line in (out / "events.jsonl").open()]
+            assert len(events) == expected_attempts
+            expected_unknown = 0 if mode == "charged_retry" else eval_api.RESERVATION
+            assert unknown_fees(root) == expected_unknown
+            ledger = root / ".local/billing.jsonl"
+            charged = sum(json.loads(line)["cost_usd"] for line in ledger.open()) if ledger.exists() else 0
+            assert charged == {"charged_retry": .007, "uncertain_retry": 0, "uncertain_next_packet": .001}[mode]
+            assert charged + expected_unknown <= cap
+            assert not list((root / "data/interim/action_choice_cache").glob("*.gz"))
+            print(f"PASS: {mode}: {len(attempts)} HTTP attempts; charged={charged}; unknown={expected_unknown}; cap={cap}")
 
 
 def main() -> None:
@@ -334,6 +372,7 @@ def main() -> None:
                         assert len(attempts) == 2 and parse_receipt(receipt, config)["status"] == "ok"
                         assert result["new_cost_usd"] == .001 and unknown_fees(root) == .01
     asyncio.run(check_transport_recovery())
+    asyncio.run(check_request_caps())
     for raw, error in ((b'{"id": broken', json.JSONDecodeError), (b'\xff', UnicodeDecodeError)):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

@@ -35,7 +35,7 @@ def transient_provider_error(body: dict) -> bool:
     return code in {408, 429} or 500 <= code < 600
 
 
-def reserve_unknown_fee(event: dict, out: Path) -> None:
+def reserve_unknown_fee(event: dict, out: Path) -> float:
     path = ROOT / ".local/billing_reservations.json"
     rows = json.loads(path.read_text()) if path.exists() else []
     reservation = {"request_key": digest({"payload_key": event["request_key"], "time": event["time"]}),
@@ -47,6 +47,7 @@ def reserve_unknown_fee(event: dict, out: Path) -> None:
         reservation["response_id"] = headers["x-generation-id"]
     rows.append(reservation)
     path.write_text(json.dumps(rows, indent=2) + "\n")
+    return RESERVATION
 
 
 async def run_requests(packets: list[dict], out: Path, *, max_new_usd: float, concurrency: int = 8,
@@ -56,7 +57,7 @@ async def run_requests(packets: list[dict], out: Path, *, max_new_usd: float, co
     history = [json.loads(line) for line in ledger.open()] if ledger.exists() else []
     project_before = sum(row["cost_usd"] for row in history)
     scope_before = sum(row["cost_usd"] for row in history if row.get("scope") == SCOPE)
-    new = reserved = 0.0
+    new = reserved = uncertain = 0.0
     counts = Counter()
     stopping = False
     by_model: dict[str, list[dict]] = {}
@@ -76,7 +77,7 @@ async def run_requests(packets: list[dict], out: Path, *, max_new_usd: float, co
     async with httpx.AsyncClient(headers={"X-OpenRouter-Title": "virtue-choices/action-choice-eval"}, timeout=180) as client:
         with (out / "receipts.jsonl").open("w") as receipts:
             async def worker(model_work):
-                nonlocal new, reserved
+                nonlocal new, reserved, uncertain
                 for packet in model_work:
                     if stopping:
                         return
@@ -96,7 +97,7 @@ async def run_requests(packets: list[dict], out: Path, *, max_new_usd: float, co
                         else:
                             assert project_before + new + reserved + outstanding(ROOT) + RESERVATION <= PROJECT_CAP_USD, "Cumulative project cap reached"
                             assert scope_before + new + reserved + outstanding(ROOT, SCOPE) + RESERVATION <= EVALUATION_CAP_USD, "Evaluation scope cap reached"
-                            assert new + reserved + RESERVATION <= max_new_usd, "This evaluation run's cap reached"
+                            assert new + uncertain + reserved + RESERVATION <= max_new_usd, "This evaluation run's cap reached"
                             reserved += RESERVATION
                             try:
                                 for attempt in range(4):
@@ -106,6 +107,7 @@ async def run_requests(packets: list[dict], out: Path, *, max_new_usd: float, co
                                         model_next_start[payload["model"]] = clock() + packet["metadata"].get("minimum_request_interval_seconds", 0)
                                     assert project_before + new + reserved + outstanding(ROOT) <= PROJECT_CAP_USD, "Project cap reached during retries"
                                     assert scope_before + new + reserved + outstanding(ROOT, SCOPE) <= EVALUATION_CAP_USD, "Evaluation cap reached during retries"
+                                    assert new + uncertain + reserved <= max_new_usd, "This evaluation run's cap reached during retries"
                                     event = {"time": datetime.now(timezone.utc).isoformat(), "request_key": key,
                                              "metadata": packet["metadata"], "attempt": attempt, "request": payload}
                                     counts["http_attempts"] += 1
@@ -119,7 +121,7 @@ async def run_requests(packets: list[dict], out: Path, *, max_new_usd: float, co
                                     except httpx.TransportError as error:
                                         event |= {"error": repr(error), "partial_body_base64": base64.b64encode(b"".join(chunks)).decode("ascii")}
                                         if not isinstance(error, (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout)):
-                                            reserve_unknown_fee(event, out)
+                                            uncertain += reserve_unknown_fee(event, out)
                                         with (out / "events.jsonl").open("a") as stream:
                                             stream.write(json.dumps(event, ensure_ascii=False) + "\n")
                                         if attempt < 3:
@@ -135,7 +137,7 @@ async def run_requests(packets: list[dict], out: Path, *, max_new_usd: float, co
                                         event["response_text"] = raw_body.decode("utf-8")
                                     except UnicodeDecodeError as error:
                                         event |= {"error": repr(error), "response_body_base64": base64.b64encode(raw_body).decode("ascii")}
-                                        reserve_unknown_fee(event, out)
+                                        uncertain += reserve_unknown_fee(event, out)
                                         with (out / "events.jsonl").open("a") as stream:
                                             stream.write(json.dumps(event, ensure_ascii=False) + "\n")
                                         raise
@@ -145,7 +147,7 @@ async def run_requests(packets: list[dict], out: Path, *, max_new_usd: float, co
                                         try:
                                             body = json.loads(event["response_text"])
                                         except json.JSONDecodeError:
-                                            reserve_unknown_fee(event, out)
+                                            uncertain += reserve_unknown_fee(event, out)
                                             raise
                                     else:
                                         body = {"error": {"message": event["response_text"]}}
@@ -159,10 +161,10 @@ async def run_requests(packets: list[dict], out: Path, *, max_new_usd: float, co
                                                 "run": str(out), "scope": SCOPE}) + "\n")
                                         assert charge <= RESERVATION, "Charge exceeded reservation; stopping before more work"
                                     elif response.status_code == 200 and "error" not in body:
-                                        reserve_unknown_fee(event, out)
+                                        uncertain += reserve_unknown_fee(event, out)
                                         raise ValueError("Successful chat response lacks an actual cost receipt")
                                     elif response.status_code in {408, 504} or ("error" in body and body["error"].get("code") in {408, 504}):
-                                        reserve_unknown_fee(event, out)
+                                        uncertain += reserve_unknown_fee(event, out)
                                     provider_timeout = response.status_code == 200 and transient_provider_error(body)
                                     rate_limited = response.status_code == 429 or ("error" in body and body["error"].get("code") == 429)
                                     if rate_limited:
