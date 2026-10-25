@@ -1,0 +1,16 @@
+{
+  "author": "PI/Astra",
+  "purpose": "Exploratory display groups of related virtues, chosen from item names and frozen teaching scopes, not fitted to model scores. Members are not synonyms or a validated factor structure. All directly judged items remain available separately.",
+  "weighting": "Equal weight per named member; no model-dependent centering or variance scaling. Derived contraries and directly judged vices are excluded.",
+  "groups": {
+    "Truthfulness": ["buddhist|ten_perfections|Truthfulness", "confucian|five_constants|Sincerity (good faith)", "hindu|ten_marks_of_dharma|Truthfulness"],
+    "Kindness": ["buddhist|ten_perfections|Loving-kindness", "christian|seven_deadly_sins_contrary_virtues|brotherly love", "confucian|five_constants|Benevolence", "taoist|laozi_three_treasures|Gentleness (compassion, 慈)"],
+    "Generosity": ["buddhist|ten_perfections|Giving", "christian|seven_deadly_sins_contrary_virtues|liberality", "islamic|quran_16_90|liberality to kith and kin"],
+    "Justice": ["confucian|five_constants|Righteousness", "islamic|quran_16_90|justice", "stoic|four_virtues_vices|justice"],
+    "Humility": ["christian|seven_deadly_sins_contrary_virtues|humility", "jewish|mesillat_yesharim_nine_stages|humility", "taoist|laozi_three_treasures|Shrinking from taking precedence of others"],
+    "Self-control": ["hindu|ten_marks_of_dharma|Self-control", "hindu|ten_marks_of_dharma|Control of the Sense-organs", "stoic|four_virtues_vices|temperance"],
+    "Forbearance": ["buddhist|ten_perfections|Patience", "christian|seven_deadly_sins_contrary_virtues|meekness", "hindu|ten_marks_of_dharma|Absence of anger", "hindu|ten_marks_of_dharma|Forgiveness"],
+    "Wisdom": ["buddhist|ten_perfections|Wisdom", "confucian|five_constants|Wisdom", "stoic|four_virtues_vices|wisdom"],
+    "Inquiry": ["rationalist|yudkowsky_twelve_virtues|argument", "rationalist|yudkowsky_twelve_virtues|curiosity", "rationalist|yudkowsky_twelve_virtues|empiricism", "rationalist|yudkowsky_twelve_virtues|evenness", "rationalist|yudkowsky_twelve_virtues|precision", "rationalist|yudkowsky_twelve_virtues|scholarship"]
+  }
+}

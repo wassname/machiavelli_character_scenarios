@@ -21,6 +21,12 @@ offline-check:
 fast-dev-run *args: data
     BEARTYPE=1 uv run --locked python scripts/checks/fast_dev_run.py {{args}}
 
+# PI/Astra: Recompute behaviour, individual-virtue and D&D figures from saved choices; no inference.
+choice-profiles run="outputs/20261024_action_preferences_resumed" dataset="outputs/20261024_release21_numeric/parquet/train.parquet" out="outputs/20261025_individual_dimensions":
+    uv run --locked python scripts/evaluation/score_choice_dimensions.py --run "{{run}}" --dataset "{{dataset}}" --out "{{out}}"
+    uv run --locked python scripts/checks/check_choice_dimensions.py --analysis "{{out}}/analysis.json" --out "{{out}}/verification.json"
+    uv run scripts/evaluation/plot_choice_dimensions.py --analysis "{{out}}/analysis.json" --out "{{out}}"
+
 # PI/OpenAI: Restore displayed choices without model calls.
 prepare out:
     uv run --locked python scripts/data/prepare_inputs.py --out "{{out}}"

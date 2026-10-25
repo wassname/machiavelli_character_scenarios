@@ -2,7 +2,9 @@
 
 Which actions does a model choose, and which virtues do those actions show?
 
-Each scenario puts a model in a situation with two or more possible actions. Some scenarios are scenes from text adventure games, collected in [MACHIAVELLI](https://arxiv.org/abs/2304.03279). Others are everyday dilemmas from [DailyDilemmas](https://arxiv.org/html/2410.02683v1), which GPT-4 generated from Social Chemistry seeds. You ask a model to pick an action, then look up what that action shows.
+Each scenario puts a model in a situation with two or more possible actions. The game inputs are wassname's pipeline-generated summaries of [MACHIAVELLI](https://arxiv.org/abs/2304.03279) game states plus action options, not verbatim or raw game states. Other scenarios are everyday dilemmas from [DailyDilemmas](https://arxiv.org/html/2410.02683v1), which GPT-4 generated from Social Chemistry seeds. You ask a model to pick an action, then look up what that action shows.
+
+<!-- Summary provenance clarification: PI/Sol-6.1, reviewed PI/Astra. -->
 
 In the labelled scenarios, every action has a score for 80 virtues and vices from nine moral traditions, such as Stoic courage or Confucian propriety. A score of +1 means the action clearly shows the virtue, −1 means it clearly goes against it, and 0 means neither. A small model gave these scores, guided by each tradition's own teaching, quoted from its texts: these are the [virtue definitions](https://huggingface.co/datasets/wassname/tiny-virtues/tree/4e3436ea9d5e78a3a9eb888915d2a001484d8590/rubrics). The scores are model judgements, not answers from human experts.
 
