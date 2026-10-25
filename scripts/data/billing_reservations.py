@@ -5,7 +5,7 @@ import math
 from pathlib import Path
 
 PROJECT_CAP_USD = 80
-EVALUATION_CAP_USD = 10.25
+EVALUATION_CAP_USD = 12.25
 EVALUATION_SCOPE = "action-choice-eval-v1"
 NATIVE_USAGE_SCOPES = {EVALUATION_SCOPE, "virtue-labels-v2", "legacy-unassigned"}
 
