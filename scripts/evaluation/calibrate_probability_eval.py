@@ -135,6 +135,24 @@ def fit_map(model: dict, reference: dict, ids: list[str], kind: str = "monotone"
             "note": "Odd extension through origin; linear interpolation; specified end-slope continuation outside maximum x. Positive identity fraction prevents new ties. Abscissas rounded to 12 decimals to merge floating-point duplicate odds."}
 
 
+def quantile_knots(model_magnitudes: np.ndarray, reference_magnitudes: np.ndarray, weights: np.ndarray) -> dict:
+    levels = [.05, .25, .5, .75, .95]
+    x = np.quantile(model_magnitudes, levels, weights=weights, method='inverted_cdf')
+    y = np.quantile(reference_magnitudes, levels, weights=weights, method='inverted_cdf')
+    unique = sorted({round(float(v), 12) for v in x if v > 1e-12})
+    assert unique, 'All quantile odds tied; map unidentified'
+    targets = [float(np.mean([b for a, b in zip(x, y) if round(float(a), 12) == v])) for v in unique]
+    targets = (1 - STRICT_SLOPE) * np.array(targets) + STRICT_SLOPE * np.array(unique)
+    result = {'x': [0.] + unique, 'y': [0.] + targets.tolist(), 'end_slope': 1., 'kind': 'quantile',
+              'identity_shrinkage': 0., 'strict_identity_fraction': STRICT_SLOPE, 'extrapolation': 'unit',
+              'quantile_levels': levels, 'model_quantiles': x.tolist(), 'reference_quantiles': y.tolist(),
+              'reference_p95_at_integer_edge': bool(np.isclose(y[-1], np.log(101), atol=1e-10)),
+              'model_p95_at_integer_edge': bool(np.isclose(x[-1], np.log(101), atol=1e-10)),
+              'note': 'Unpaired weighted magnitude quantiles; origin anchor, linear origin-to-p05, unit slope above p95. Duplicate x quantiles merge by mean y; zero x stays zero. Positive identity fraction prevents new ties.'}
+    assert (np.diff(result['y']) > 0).all()
+    return result
+
+
 def quantile_map(model: dict, reference: dict, ids: list[str]) -> dict:
     pairs = []
     for sid in ids:
@@ -143,25 +161,12 @@ def quantile_map(model: dict, reference: dict, ids: list[str]) -> dict:
             x, y = model[sid][i] - model[sid][j], reference[sid][i] - reference[sid][j]
             pairs.append({'source_id': sid, 'x': float(abs(x)), 'y': float(abs(y)),
                           'weight': 1 / len(indices), 'same_direction': bool(np.sign(x) == np.sign(y)), 'opposed': bool(x * y < 0)})
-    levels = [.05, .25, .5, .75, .95]
     weights = np.array([p['weight'] for p in pairs])
-    x = np.quantile([p['x'] for p in pairs], levels, weights=weights, method='inverted_cdf')
-    y = np.quantile([p['y'] for p in pairs], levels, weights=weights, method='inverted_cdf')
-    unique = sorted({round(float(v), 12) for v in x if v > 1e-12})
-    assert unique, 'All quantile odds tied; map unidentified'
-    targets = [float(np.mean([b for a, b in zip(x, y) if round(float(a), 12) == v])) for v in unique]
-    targets = (1 - STRICT_SLOPE) * np.array(targets) + STRICT_SLOPE * np.array(unique)
-    result = {'x': [0.] + unique, 'y': [0.] + targets.tolist(), 'end_slope': 1., 'kind': 'quantile',
-              'identity_shrinkage': 0., 'strict_identity_fraction': STRICT_SLOPE, 'extrapolation': 'unit',
-              'landmark_ids': [], 'fit_ids': ids, 'points': pairs,
-              'quantile_levels': levels, 'model_quantiles': x.tolist(), 'reference_quantiles': y.tolist(),
-              'reference_p95_at_integer_edge': bool(np.isclose(y[-1], np.log(101), atol=1e-10)),
-              'model_p95_at_integer_edge': bool(np.isclose(x[-1], np.log(101), atol=1e-10)),
-              'direction_disagreement_fraction': sum(p['weight'] * (not p['same_direction']) for p in pairs) / sum(weights),
-              'opposed_pair_fraction': sum(p['weight'] * p['opposed'] for p in pairs) / sum(weights),
-              'note': 'Transductive unpaired matching of weighted magnitude distributions, equal weight per question; origin anchor and linear origin-to-p05; unit slope above p95. Duplicate x quantiles merge by mean y; zero x constrained to zero. Positive identity fraction prevents new ties.'}
-    assert (np.diff(result['y']) > 0).all()
-    return result
+    result = quantile_knots(np.array([p['x'] for p in pairs]), np.array([p['y'] for p in pairs]), weights)
+    return result | {'landmark_ids': [], 'fit_ids': ids, 'points': pairs,
+                     'direction_disagreement_fraction': sum(p['weight'] * (not p['same_direction']) for p in pairs) / sum(weights),
+                     'opposed_pair_fraction': sum(p['weight'] * p['opposed'] for p in pairs) / sum(weights),
+                     'fit_note': 'Equal total question weight; fit_ids identify fitting questions. Held-out versus same-set use is determined by the caller.'}
 
 
 def apply_map(logp: np.ndarray, mapping: dict) -> tuple[np.ndarray, int]:
