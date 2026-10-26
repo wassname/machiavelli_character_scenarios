@@ -191,7 +191,7 @@ def dnd_2d(scores: Path, out: Path, mode: str, role: str) -> Path:
     return path
 
 
-def spider(scores: Path, out: Path, mode: str, role: str) -> Path:
+def spider(scores: Path, out: Path, mode: str, role: str, shape_only: bool = False) -> Path:
     # Exploratory virtue groups (rubrics/virtue_display_groups.json); spoke = mean slope of the group's virtues; dashed ring = DeepSeek (0).
     groups = json.loads((ROOT / 'rubrics/virtue_display_groups.json').read_text())['groups']
     rows = [r for r in json.loads(scores.read_text())['rows'] if r['mode'] == mode and r['role'] == role and r['dimension']['family'] == 'virtues']
@@ -202,6 +202,8 @@ def spider(scores: Path, out: Path, mode: str, role: str) -> Path:
         for m in COLORS:
             by = {r['dimension']['id']: r['beta_nats_per_label_unit'] for r in rows if r['source'] == src and short(r['model']) == m and r['beta_nats_per_label_unit'] is not None}
             vals[m] = [float(np.mean([by[i] for i in items if i in by])) for items in groups.values()]
+            if shape_only:  # remove the model's overall level so only its profile shape remains
+                vals[m] = list(np.array(vals[m]) - np.mean(vals[m]))
         lim = max(abs(v) for vs in vals.values() for v in vs) * 1.1
         for m, v in vals.items():
             ax.plot(np.r_[angle, angle[0]], np.r_[v, v[:1]], color=COLORS[m], lw=1.6 if m != 'DeepSeek self' else 1, ls='-' if m != 'DeepSeek self' else ':', marker='o', ms=3, label=m)
@@ -213,10 +215,10 @@ def spider(scores: Path, out: Path, mode: str, role: str) -> Path:
         ax.tick_params(axis='y', labelsize=7)
         ax.set_title(name, pad=20)
     axs[1].legend(loc='upper left', bbox_to_anchor=(1.02, 1), frameon=False)
-    fig.suptitle(f'Virtue groups relative to DeepSeek (dashed ring = DeepSeek) \u00b7 {role} questions, {mode}', fontsize=12)
+    fig.suptitle(f'Virtue groups relative to DeepSeek (dashed ring = DeepSeek) \u00b7 {role} questions, {mode}' + (' \u00b7 shape only: each model\'s average over the 9 groups removed' if shape_only else ''), fontsize=12)
     fig.supxlabel(f'Spoke = mean over the group\'s virtues of: {UNIT[mode]}; outside the dashed ring = model favours that group more than DeepSeek. '
                   'Groups are exploratory, not traditions; no intervals here (see the per-virtue plots).', fontsize=9)
-    path = out / f'spider_{role}_{mode}.png'
+    path = out / f'spider_{role}_{mode}{"_shape" if shape_only else ""}.png'
     fig.savefig(path, dpi=120, bbox_inches='tight')
     plt.close(fig)
     return path
@@ -318,7 +320,10 @@ def page(scoring: Path, out: Path) -> Path:
               '<p>Variance of the four models\' mean log-probabilities divided by their draw-to-draw variance, pooled over questions. Dev is not higher than control, so choosing '
               'DeepSeek-uncertain questions did not separate the models better than random questions.</p>',
               '<h2>Where each model differs most (dev, raw)</h2>', img(top_differences(expected, out, 'expected', 'dev')),
-              '<h2>Virtue groups (spider, dev, raw)</h2>', img(spider(expected, out, 'expected', 'dev')),
+              '<h2>Virtue groups (spider, dev)</h2>', img(spider(expected, out, 'expected', 'dev')),
+              '<p>The 66 virtue labels share one strong good/bad direction, so a model that is overall more virtuous than DeepSeek sits outside the ring on every spoke. '
+              'The second spider removes each model\'s overall level, leaving only which groups it favours relative to its own average.</p>',
+              img(spider(expected, out, 'expected', 'dev', shape_only=True)),
               '<h2>D&D lawfulness and goodness (dev, raw)</h2>', img(dnd_2d(expected, out, 'expected', 'dev')),
               '<h2>All 66 virtues (dev)</h2>', img(figs['expected', 'dev'][0]),
               '<details><summary>Virtues with intervals (dev)</summary>' + img(figs['expected', 'dev'][1]) + '</details>',
