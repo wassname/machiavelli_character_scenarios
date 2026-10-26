@@ -73,15 +73,15 @@ def render(scores: Path, scenes_path: Path, out: Path, mode: str, role: str) -> 
         for ax, (src, name) in zip(axs, SOURCES.items(), strict=True):
             sub = [r for r in rows if r['source'] == src and r['dimension']['family'] == family]
             n = max((r['informative_questions'] for r in sub), default=0)
-            dot_panel(ax, sub, [d['id'] for d in dims], f'{name} \u00b7 {role} questions (up to {n})', xlabel)
+            dot_panel(ax, sub, [d['id'] for d in dims], f'{name} \u00b7 {n} {role} questions (fewer for labels missing on some menus)', xlabel)
         lab = [f"{d['label']} [{d.get('tradition', '')}]" + (' \u2022 vice' if d['kind'] == 'vices' else '') if family == 'virtues'
                else d['label'].removeprefix('agg_').replace('_', ' ') for d in dims]
         axs[0].set_yticks(range(len(dims)), lab)
-        handles, names = axs[0].get_legend_handles_labels()
-        fig.suptitle(f'{family.capitalize()}: which options does each model put more probability on than DeepSeek? ({mode})', fontsize=12)
-        fig.legend(handles, names, loc='outside lower center', ncol=len(names), frameon=False, markerscale=2)
+        axs[0].legend(loc='upper left', bbox_to_anchor=(0, 1.0), ncol=len({short(r['model']) for r in rows}), frameon=True, framealpha=.95, fontsize=8, markerscale=1.5)
+        fig.suptitle(f'{family.capitalize()}: which options does each model put more probability on than DeepSeek? ({mode}, {role} questions)', fontsize=12)
         fig.supxlabel('Positive = the model gives more probability than DeepSeek to options scoring higher on this label (vices: more of the named vice). '
-                      'Lines: 95% game/topic cluster bootstrap; arrows = interval runs past the axis. "DeepSeek self" = DeepSeek draws 0-1 vs 2-3, the noise floor.', fontsize=9)
+                      'Lines: 95% game/topic cluster bootstrap over questions (draw noise not included). Arrows: the interval (or the point, drawn at the edge) runs past the axis. '
+                      '"DeepSeek self" = DeepSeek draws 1-2 vs 3-4, an empirical noise check.', fontsize=9)
         path = out / f'{family}_{role}_{mode}.png'
         fig.savefig(path, dpi=120, bbox_inches='tight')
         plt.close(fig)
@@ -110,14 +110,14 @@ def heatmap(scores: Path, out: Path, mode: str, role: str) -> tuple[Path, list[l
         yy, xx = np.nonzero(sig)
         ax.plot(xx, yy, 'k.', ms=3)
         ax.set_xticks(range(len(models)), models, rotation=45, ha='right')
-        ax.set_title(name)
+        ax.set_title(f"{name.split()[0]} ({max(r['informative_questions'] for r in rows if r['source'] == src)} q)", fontsize=10)
         for j, m in enumerate(models):
             pos, neg = int(((grid[:, j] > 0) & sig[:, j]).sum()), int(((grid[:, j] < 0) & sig[:, j]).sum())
             counts.append([name, m, pos, neg, int(np.isfinite(grid[:, j]).sum())])
     axs[0].set_yticks(range(len(dims)), [f"{d['label']} [{d.get('tradition', '')}]" + (' \u2022 vice' if d['kind'] == 'vices' else '') for d in dims], fontsize=7)
     fig.colorbar(im, ax=axs, shrink=.3, label='Nats per label unit vs DeepSeek (clipped at \u00b10.6)')
-    fig.suptitle(f'66 virtues, {role} questions ({mode}): blue = model favours options higher on the virtue more than DeepSeek does', fontsize=10)
-    fig.supxlabel('Dot = 95% game/topic bootstrap interval excludes 0. "DeepSeek self" (draws 0-1 vs 2-3) shows how many dots noise alone gives.', fontsize=8)
+    fig.suptitle(f'66 virtues, {role} questions ({mode}): blue = model puts more probability than DeepSeek on options scoring higher on this label\n(for rows marked vice: more of the vice)', fontsize=10)
+    fig.supxlabel('Dot = 95% game/topic bootstrap interval excludes 0 (draw noise not included). "DeepSeek self" = DeepSeek draws 1-2 vs 3-4, an empirical noise check.', fontsize=8)
     path = out / f'heatmap_virtues_{role}_{mode}.png'
     fig.savefig(path, dpi=130, bbox_inches='tight')
     plt.close(fig)
@@ -134,7 +134,7 @@ def examples(question_tables: Path, k: int = 6) -> str:
         table = [[o, escape(t[:90])] + [f"{models[m]['mean_stated_percent'][o]:.0f}%" + ('' if 'deepseek' in m else f" ({models[m]['calibrated_nats'][o]:+.2f})")
                                         for m in models] for o, t in q['options'].items()]
         heads = ['id', 'option'] + [('DeepSeek' if 'deepseek' in m else names[m]) + ('' if 'deepseek' in m else ' (nats)') for m in models]
-        replies = ''.join(f"<details><summary>{escape('DeepSeek' if 'deepseek' in m else names[m])}: one native reply</summary><pre>{escape(v['native_example']['reply'])}</pre></details>"
+        replies = ''.join(f"<details><summary>{escape('DeepSeek' if 'deepseek' in m else names[m])}: one native reply (choice and probabilities use the displayed IDs; displayed-to-original: {escape(json.dumps(v['native_example'].get('displayed_to_original')))})</summary><pre>{escape(v['native_example']['reply'])}</pre></details>"
                           for m, v in models.items() if v.get('native_example'))
         blocks.append(f"<h4>{escape(q['source_id'])}</h4><pre>{escape(q['text'][-900:])}</pre>" + tabulate(table, headers=heads, tablefmt='html') + replies)
     return ('<h2>Example questions</h2><p>Hash-chosen dev questions, not typical or best. Percent = mean of the 4 stated draws; '
@@ -146,14 +146,15 @@ def page(scoring: Path, out: Path) -> Path:
     summary = json.loads((scoring / 'summary.json').read_text())
     noise = json.loads((scoring / 'draw_noise.json').read_text())['summaries']
     figs, counts = {}, {}
-    for mode, file in (('calibrated', 'scored_quantile.json'), ('raw', 'scored_identity.json')):
-        for role in ('dev', 'control'):
+    for mode, file, roles in (('raw', 'scored_identity.json', ('dev', 'control')), ('calibrated', 'scored_quantile.json', ('dev',))):
+        for role in roles:
             figs[mode, role] = render(scoring / file, None, out, mode, role)
             h, c = heatmap(scoring / file, out, mode, role)
             figs[mode, role].insert(0, h)
             counts[mode, role] = c
-    count_table = tabulate([[src, m, f'{pos}/{n}', f'{neg}/{n}'] for src, m, pos, neg, n in counts['calibrated', 'dev']],
-                           headers=['Source', 'Model', 'Virtues: interval above 0', 'Virtues: interval below 0'], tablefmt='html')
+    def count_table(key):
+        return tabulate([[src, m, f'{pos}/{n}', f'{neg}/{n}'] for src, m, pos, neg, n in counts[key]],
+                        headers=['Source', 'Model', 'Virtues: interval above 0', 'Virtues: interval below 0'], tablefmt='html')
     noise_rows = [[SOURCES[r['source']], r['role'], r['questions'], f"{r['pooled_between_over_draw_noise']:.1f}", f"{r['ci95'][0]:.1f} to {r['ci95'][1]:.1f}"]
                   for r in noise if r['model_group'] == 'comparisons_only' and r['role'] in ('dev', 'control')]
     noise_table = tabulate(noise_rows, headers=['Source', 'Questions', 'n', 'Between-model / draw-noise variance', '95% interval'], tablefmt='html')
@@ -162,24 +163,30 @@ def page(scoring: Path, out: Path) -> Path:
     blocks = ['<h1>Which virtues does each model favour, compared with DeepSeek?</h1>',
               '<p>Five models stated a percentage for every option of 505 moral-choice questions, 4 draws each with rotated option order and reasoning (10k-token budget). '
               'For each question and option, nats = log(model %) minus log(DeepSeek %), so the question\'s base rate cancels. Per virtue, the number shown is how many nats more '
-              '(or fewer) a model puts on options that score one unit higher on that virtue, compared with DeepSeek. Everyday dilemmas and game summaries are kept separate.</p>',
-              '<p>Questions were chosen with DeepSeek only: its most uncertain 10% (dev) and random controls. Main views are calibrated: each model\'s confidence scale is '
-              'matched to DeepSeek\'s by quantiles (5th to 95th percentile), because models differ in how extreme their percentages are. Calibration passed the check that '
-              f'it does not add noise when DeepSeek is compared with itself, in both sources ({escape(json.dumps(gate["per_source"]))}). Uncalibrated views are below.</p>',
-              '<h2>How many virtues differ from DeepSeek? (dev questions, calibrated)</h2>', count_table,
-              '<p>"DeepSeek self" compares DeepSeek\'s draws 1-2 with draws 3-4: its count is roughly what noise alone produces.</p>',
+              '(or fewer) a model puts on options that score one unit higher on that virtue, compared with DeepSeek. Everyday dilemmas and game summaries are kept separate. '
+              'Questions were chosen with DeepSeek only: its most uncertain 10% (dev) and random controls.</p>',
+              '<p><b>Read with care.</b> These raw numbers mix two things: a model\'s values and how decisive it is. A model that spreads its percentages more evenly than DeepSeek '
+              'gets negative nats on whatever DeepSeek favours. On the confident control questions this dominates (Qwen, the most even spreader, is below DeepSeek on most virtues). '
+              'Calibrating each model\'s confidence scale to DeepSeek\'s (quantile matching) was meant to remove this; it passed its check on dev questions but produced large '
+              'artefacts outside its fitted range (DeepSeek compared with itself on control questions: 51 of 66 virtues below zero), so it is shown only for dev, as a secondary view.</p>',
+              '<h2>How many virtues differ from DeepSeek? (dev questions, raw)</h2>', count_table(('raw', 'dev')),
+              '<p>"DeepSeek self" compares DeepSeek\'s draws 1-2 with draws 3-4. It still shows about 5 virtues below zero: draw-to-draw noise is not in the intervals, and the 66 '
+              'virtue labels move together, so one shared fluctuation can push several past zero. Treat about 5 per model as the noise level.</p>',
               '<h2>Did choosing uncertain questions help?</h2>', noise_table,
-              '<p>Variance of the four models\' mean log-probabilities divided by their draw-to-draw variance, pooled over questions. If uncertain (dev) questions separated models better than random controls, dev would be higher.</p>',
-              '<h2>Virtues at a glance</h2>', img(figs['calibrated', 'dev'][0]),
-              '<details open><summary>Virtues with intervals (dev, calibrated)</summary>' + img(figs['calibrated', 'dev'][1]) + '</details>',
-              '<details open><summary>Behaviours, including violence (dev, calibrated)</summary>' + img(figs['calibrated', 'dev'][2]) + '</details>',
-              '<details open><summary>D&D lawfulness and goodness (dev, calibrated)</summary>' + img(figs['calibrated', 'dev'][3]) + '</details>',
-              '<h2>Random control questions (calibrated)</h2>' + ''.join(img(x) for x in figs['calibrated', 'control']),
-              '<h2>Uncalibrated (raw) views</h2>' + ''.join(f'<details><summary>{escape(x.stem)}</summary>{img(x)}</details>' for role in ('dev', 'control') for x in figs['raw', role]),
+              '<p>Variance of the four models\' mean log-probabilities divided by their draw-to-draw variance, pooled over questions. Dev is not higher than control, so choosing '
+              'DeepSeek-uncertain questions did not separate the models better than random questions.</p>',
+              '<h2>Virtues at a glance (dev, raw)</h2>', img(figs['raw', 'dev'][0]),
+              '<details open><summary>Virtues with intervals (dev, raw)</summary>' + img(figs['raw', 'dev'][1]) + '</details>',
+              '<details open><summary>Behaviours, including violence (dev, raw)</summary>' + img(figs['raw', 'dev'][2]) + '</details>',
+              '<details open><summary>D&D lawfulness ("order") and goodness ("morality") (dev, raw)</summary>' + img(figs['raw', 'dev'][3]) + '</details>',
+              '<h2>Random control questions (raw)</h2>', count_table(('raw', 'control')), ''.join(img(x) for x in figs['raw', 'control']),
+              '<h2>Calibrated view (dev only, secondary)</h2>', count_table(('calibrated', 'dev')),
+              ''.join(f'<details><summary>{escape(x.stem)}</summary>{img(x)}</details>' for x in figs['calibrated', 'dev']),
               examples(scoring / 'question_tables.jsonl'),
               '<h2>Limits</h2><p>Stated percentages are self-reports, not logprobs. Labels are automatic virtue grades of each option, not ground truth; label error is not in the intervals. '
-              'Intervals are per-label 95% game/topic cluster bootstraps with no correction for 66 comparisons. The per-virtue slope is pooled across questions, so questions whose options '
-              'differ more on that virtue count more. Luna reasons far less than the others under a token budget (about 80 tokens).</p>',
+              'Intervals are per-label 95% game/topic cluster bootstraps over questions, with draws fixed and no correction for 66 comparisons. The per-virtue slope is pooled across questions, so questions whose options '
+              'differ more on that virtue count more. The 66 virtue labels are strongly correlated, so many same-sign results can reflect one shared good/bad direction. '
+              'Luna reasons far less than the others under a token budget (about 80 tokens).</p>',
               f'<p>Data: <code>{escape(str(scoring))}</code></p><p>-- PI/OpenAI</p>']
     html = ('<!doctype html><html lang="en"><meta charset="utf-8"><title>Stated-probability tiny eval</title><style>body{font:16px/1.5 system-ui;max-width:1400px;margin:30px auto;padding:0 24px;color:#222}'
             'img{max-width:100%;height:auto}table{border-collapse:collapse;font-size:14px;margin:10px 0}td,th{padding:5px 10px;border-bottom:1px solid #ddd;text-align:left}'
