@@ -59,13 +59,13 @@ def analyze(run: Path) -> dict:
               'stated_extremes': {'exactly_0_or_100': int(((stated == 0) | (stated == 100)).sum()), 'values': int(stated.size)},
               'position_mean_percent': {f'{k} options, position {i}': round(float(np.mean(v)), 1) for (k, i), v in sorted(pos.items())},
               'between_over_within_mean_noise': {'median': float(np.median(noise_ratio)), 'per_question': [round(float(x), 1) for x in noise_ratio],
-                  'meaning': 'Between-model variance of 4-draw mean log-probabilities / variance expected from draw noise alone (within-model variance / 4). 1 = models indistinguishable from draw noise.'},
+                  'meaning': 'Between-model variance of 4-draw mean log-probabilities / variance expected from draw noise alone (within-model variance / 4). Under an independent identical-draws null the numerator and denominator have similar expectations, but the expected ratio is not exactly 1 (ratio of noisy estimates; rotated option orders also break independence). Descriptive only.'},
               'cost_usd': sum(r['usage']['cost'] for r in rows if 'usage' in r),
               'questions': questions}
     (run / 'analysis.json').write_text(json.dumps(result, ensure_ascii=False, indent=2) + '\n')
     lines = ['# Tiny eval trial: stated option probabilities\n', f"Replies {result['replies']}; status {result['status_counts']}; highest stated option = chosen option in {result['choice_is_top']}/{result['ok']}.",
              f"Stated values exactly 0 or 100: {result['stated_extremes']['exactly_0_or_100']}/{result['stated_extremes']['values']}. Cost ${result['cost_usd']:.4f}.",
-             f"Between-model / draw-noise variance ratio, median over questions: {result['between_over_within_mean_noise']['median']:.1f} (1 = no model signal).\n"]
+             f"Between-model / draw-noise variance ratio, median over questions: {result['between_over_within_mean_noise']['median']:.1f} (descriptive; not a test against 1).\n"]
     for q in questions:
         lines.append(f"## {q['source_id']}\n")
         table = [[o, t[:70]] + [f"{q['mean_stated_percent'][m][o]:.0f}% ({q['nats_vs_model_average'][m][o]:+.2f})" for m in models] for o, t in q['options'].items()]
