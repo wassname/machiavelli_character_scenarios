@@ -9,6 +9,7 @@ import gzip
 import hashlib
 from itertools import combinations
 import json
+import math
 from pathlib import Path
 import sys
 import time
@@ -74,8 +75,9 @@ def pooled_logs(rows: list[dict], scenes: dict, expected_draws: int) -> tuple[di
             continue
         options = list(scenes[sid]["choice_text"])
         assert all(set(r["original_probabilities"]) == set(options) for r in rs), sid
-        array = np.array([[r["original_probabilities"][o] for o in options] for r in rs])
-        result[model, sid] = np.log((array + 1) / (100 + len(options))).mean(0)
+        # Integer products preserve exact ties across permuted draw multisets. -- PI/OpenAI
+        log_products = np.array([math.log(math.prod(r['original_probabilities'][o] + 1 for r in rs)) for o in options])
+        result[model, sid] = log_products / len(rs) - math.log(100 + len(options))
     return result, incomplete
 
 
@@ -210,12 +212,12 @@ def sha_text(text: str) -> str:
 
 
 def score_labels(ids: list[str], nats: dict, models: list[str], scores: dict, dimensions: list[dict],
-                 scenes: dict, replicates: int) -> tuple[list[dict], dict]:
+                 scenes: dict, replicates: int, include_derived: bool = False) -> tuple[list[dict], dict]:
     rows, coverage = [], {}
     for family in ("virtues", "behaviours", "dnd"):
-        ix = [i for i, d in enumerate(dimensions) if d["family"] == family and d["derived_from"] is None]
+        ix = [i for i, d in enumerate(dimensions) if d["family"] == family and (include_derived or d["derived_from"] is None)]
         if family == "virtues":
-            assert len(ix) == 66
+            assert len(ix) == (80 if include_derived else 66)
         complete = [s for s in ids if np.isfinite(scores[s][:, ix]).all()]
         coverage[family] = {"complete": len(complete), "excluded_missing": sorted(set(ids) - set(complete))}
         if not complete:
@@ -262,7 +264,7 @@ def read_selection(path: Path, extreme_role: str, exclude_ids: Path | None) -> d
 
 
 def write_question_tables(result: dict, comparison_rows: list[dict], reference_rows: list[dict], scenes: dict,
-                          scores: dict, dimensions: list[dict], out: Path) -> Path:
+                          scores: dict, dimensions: list[dict], out: Path, extreme_role: str = 'extreme') -> Path:
     records = defaultdict(list)
     for r in reference_rows + [r for r in comparison_rows if r['model'] != REFERENCE]:
         records[r['source_id'], r['model']].append(r)
@@ -280,8 +282,12 @@ def write_question_tables(result: dict, comparison_rows: list[dict], reference_r
                 rows = sorted(records[sid, model], key=lambda r: r['draw'])
                 assert rows
                 item = {'mean_stated_percent': {o: float(np.mean([r['original_probabilities'][o] for r in rows])) for o in options},
-                        'draws': [{'draw': r['draw'], 'probabilities': r['original_probabilities'], 'trace': r['trace']} for r in rows],
-                        'native_example': {'trace': rows[0]['trace'], 'reply': rows[0]['content'] if 'content' in rows[0] else None}}
+                        'draws': [{'draw': r['draw'], 'probabilities': r['original_probabilities'],
+                                   'choice': r['original_choice_id'] if 'original_choice_id' in r else r['choice'],
+                                   'trace': r['trace']} for r in rows],
+                        'native_example': {'trace': rows[0]['trace'], 'reply': rows[0]['content'] if 'content' in rows[0] else None,
+                                           'displayed_to_original': rows[0]['displayed_to_original'],
+                                           'id_note': 'Native reply IDs are displayed IDs; summary probabilities and choices use original IDs.'}}
                 if model == REFERENCE:
                     baseline = next(iter(models.values()))['baseline_logp']
                     item['geometric_probabilities'] = dict(zip(options, np.exp(baseline).tolist()))
@@ -293,7 +299,7 @@ def write_question_tables(result: dict, comparison_rows: list[dict], reference_r
                     item['geometric_probabilities'] = dict(zip(options, np.exp(q['raw_logp']).tolist()))
                     item['calibrated_probabilities'] = dict(zip(options, np.exp(q['calibrated_logp']).tolist()))
                 native[model] = item
-            table = {'source_id': sid, 'source': scenes[sid]['source'], 'role': next(iter(models.values()))['role'],
+            table = {'source_id': sid, 'source': scenes[sid]['source'], 'role': extreme_role if next(iter(models.values()))['role'] == 'extreme' else next(iter(models.values()))['role'],
                      'eval_cluster': scenes[sid]['eval_cluster'], 'text': scenes[sid]['text'],
                      'options': scenes[sid]['choice_text'],
                      'option_scores': {o: [float(v) if np.isfinite(v) else None for v in values] for o, values in zip(options, scores[sid])},
@@ -304,7 +310,7 @@ def write_question_tables(result: dict, comparison_rows: list[dict], reference_r
 
 def analyze(name: str, model_logs: dict, reference: dict, scenes: dict, scores: dict, dimensions: list[dict],
             out: Path, landmark_count: int, replicates: int, selection: dict | None = None,
-            role_overrides: dict | None = None, map_options: dict | None = None) -> dict:
+            role_overrides: dict | None = None, map_options: dict | None = None, include_derived: bool = False) -> dict:
     models = sorted(model_logs)
     matched = sorted(set(reference).intersection(*(set(model_logs[m]) for m in models)))
     assert matched, f"{name}: no DeepSeek overlap"
@@ -351,7 +357,7 @@ def analyze(name: str, model_logs: dict, reference: dict, scenes: dict, scores: 
         if roles.get('extreme'):
             cohorts['scored'] = roles['dev'] + roles['extreme']
         for role, cohort_ids in cohorts.items():
-            rows, coverage = score_labels(cohort_ids, nats, models, scores, dimensions, scenes, replicates)
+            rows, coverage = score_labels(cohort_ids, nats, models, scores, dimensions, scenes, replicates, include_derived)
             label_rows.extend(r | {"source": source, "role": role,
                                         'map_kind': source_maps[r['model']]['kind'] if r['mode'] == 'calibrated' else 'identity'} for r in rows)
             source_info[source]["cohorts"][role] = coverage
@@ -453,12 +459,94 @@ def regression_check() -> dict:
     higher_variance_nats = nats | {('injected', mode, 'four'): .8 * higher_variance['four'][:, 0] + 7 for mode in ('raw', 'calibrated')}
     weighted, _ = score_labels(['two', 'four'], higher_variance_nats, ['injected', 'null'], higher_variance, dimensions, scenes, 100)
     assert all(abs(r['beta_nats_per_label_unit'] - .72) < 1e-12 for r in weighted if r['model'] == 'injected' and r['family'] == 'virtues')
-    return {"option_count_normalization": "PASS: equal-variance 2-option beta .4 and 4-option beta .8 pool to .6, not option-weighted .6667",
+    tie_scene = {'q': {'text': 'Tie fixture', 'source': 'daily_dilemmas', 'choice_text': {'0': 'A', '1': 'B'}}}
+    tie_rows = [{'model': 'fixture', 'source_id': 'q', 'source': 'daily_dilemmas', 'draw': d,
+                 'original_prompt_sha256': sha_text('Tie fixture'), 'original_probabilities': {'0': p, '1': 100-p}}
+                for d, p in enumerate([75, 30, 70, 25])]
+    tie, missing = pooled_logs(tie_rows, tie_scene, 4)
+    assert not missing and tie['fixture', 'q'][0] == tie['fixture', 'q'][1]
+    return {"exact_permuted_draw_ties": 'PASS: permuting identical integer-percent draw multisets leaves pooled options exactly tied',
+            "option_count_normalization": "PASS: equal-variance 2-option beta .4 and 4-option beta .8 pool to .6, not option-weighted .6667",
             "label_variance_weighting": "PASS: raising the second menu variance fourfold gives pooled beta .72, not equal-slope mean .6",
             "constant_question_offsets": "PASS: +7/+5 nats cancel; null model beta 0",
             "constant_scores": "PASS: unidentified coefficient and bootstrap stay null",
             "missing_dnd": "PASS: missing offered-action labels excluded, not zero",
             "permutation": "PASS: every coefficient and interval identical after option permutation"}
+
+
+def draw_noise_analysis(comparison_rows: list[dict], reference_rows: list[dict], result: dict,
+                        scenes: dict, replicates: int, extreme_role: str) -> dict:
+    grouped = defaultdict(list)
+    for r in reference_rows + [r for r in comparison_rows if r['model'] != REFERENCE]:
+        grouped[r['model'], r['source_id']].append(r)
+    models = [REFERENCE] + result['models']
+    roles = {q['source_id']: q['role'] for q in result['question_nats']}
+    questions = []
+    for sid in sorted(roles):
+        logs = {}
+        options = list(scenes[sid]['choice_text'])
+        for model in models:
+            rows = grouped[model, sid]
+            assert len(rows) >= 2, 'Draw-noise estimation needs at least two draws per model'
+            logs[model] = np.log((np.array([[r['original_probabilities'][o] for o in options] for r in rows]) + 1) / (100 + len(options)))
+        for name, subset in (('all_models', models), ('comparisons_only', result['models'])):
+            means = np.stack([logs[m].mean(0) for m in subset])
+            between = float(means.var(0, ddof=1).mean())
+            mean_noise = float(np.mean([logs[m].var(0, ddof=1).mean() / len(logs[m]) for m in subset]))
+            questions.append({'source_id': sid, 'source': scenes[sid]['source'],
+                              'role': extreme_role if roles[sid] == 'extreme' else roles[sid],
+                              'model_group': name, 'draws': {m: len(logs[m]) for m in subset},
+                              'between_model_mean_logp_variance': between, 'mean_draw_noise_variance': mean_noise,
+                              'between_over_draw_noise': between / mean_noise if mean_noise > 0 else None,
+                              'zero_noise_status': None if mean_noise > 0 else 'positive_between_zero_noise' if between > 0 else 'both_zero'})
+    summaries = []
+    for source, role, model_group in sorted({(q['source'], q['role'], q['model_group']) for q in questions}):
+        qs = [q for q in questions if (q['source'], q['role'], q['model_group']) == (source, role, model_group)]
+        values = np.array([[q['between_model_mean_logp_variance'], q['mean_draw_noise_variance']] for q in qs])
+        groups = [scenes[q['source_id']]['eval_cluster'] for q in qs]
+        samples = bootstrap(values[:, None, :], groups, replicates)[:, 0]
+        valid = samples[:, 1] > 0
+        ratios = samples[valid, 0] / samples[valid, 1]
+        point = values[:, 0].mean() / values[:, 1].mean() if values[:, 1].mean() > 0 else None
+        finite_question_ratios = [q['between_over_draw_noise'] for q in qs if q['between_over_draw_noise'] is not None]
+        summaries.append({'source': source, 'role': role, 'model_group': model_group, 'questions': len(qs),
+                          'pooled_between_over_draw_noise': float(point) if point is not None else None,
+                          'ci95': np.quantile(ratios, [.025, .975]).tolist() if len(ratios) else None,
+                          'median_finite_question_ratio': float(np.median(finite_question_ratios)) if finite_question_ratios else None,
+                          'zero_noise_questions': sum(q['zero_noise_status'] is not None for q in qs)})
+    return {'author': 'PI/OpenAI', 'questions': questions, 'summaries': summaries,
+            'method': 'Per model/question: mean add-one-smoothed log p across draws, before geometric-pool renormalization. Between = sample variance across model means, averaged over options. Noise of each model mean = within-model sample draw variance / its draw count, then averaged across options/models. Ratio 1 is the noise-only expectation under independent identical model distributions; ratio includes finite-sample noise and is not a significance test. Zero denominators stay null with explicit status. Pooled source/role ratio divides mean between variance by mean noise; intervals resample games/topics with fixed draws.'}
+
+
+def export_scored_rows(results: list[dict], out: Path, dimensions: list[dict], extreme_role: str, primary_mode: str,
+                       control_draws_a: list[int], control_draws_b: list[int]) -> None:
+    comparisons = [r for r in results if r['name'] == 'comparison']
+    if not comparisons:
+        return
+    main = comparisons[0]
+    kinds = {m['kind'] for source in main['maps'].values() for m in source.values()}
+    assert len(kinds) == 1
+    kind = kinds.pop()
+    for mode, filename, self_name in (('raw', 'scored_identity.json', 'self_identity'),
+                                      ('calibrated', 'scored_quantile.json' if kind == 'quantile' else f'scored_calibrated_{kind}.json', 'self_quantile' if kind == 'quantile' else None)):
+        rows = []
+        for result in [main] + [r for r in results if r['name'] == self_name]:
+            for r in result['rows']:
+                if r['mode'] != mode or r['role'] not in ('dev', 'control', 'extreme', 'landmark'):
+                    continue
+                noise_floor = result is not main
+                rows.append(r | {'model': 'DeepSeek self' if noise_floor else r['model'],
+                                 'role': extreme_role if r['role'] == 'extreme' else r['role'],
+                                 'derived': r['dimension']['derived_from'] is not None, 'noise_floor': noise_floor,
+                                 'noise_floor_draws': {'model': control_draws_a, 'reference': control_draws_b} if noise_floor else None})
+        source_metadata = {s: info | {'roles': {(extreme_role if role == 'extreme' else role): ids for role, ids in info['roles'].items()},
+                                      'cohorts': {(extreme_role if role == 'extreme' else role): value for role, value in info['cohorts'].items()}}
+                           for s, info in main['sources'].items()}
+        artifact = {'author': 'PI/OpenAI', 'mode': mode, 'primary': mode == primary_mode, 'dimensions': dimensions,
+                    'sources': source_metadata, 'rows': rows,
+                    'beta_note': 'Pooled within-question slope: sum_q mean_options(centered label * centered nats) / sum_q mean_options(centered label squared). Menus with larger label variance weigh more. Each label fit is marginal, not a unique causal virtue effect.',
+                    'noise_floor_note': 'DeepSeek self pools independent draw groups, not a zero-valued reference. Its two-draw-vs-two-draw noise is larger than would be expected for independent four-draw-vs-four-draw means. CIs fix maps and replies; derived virtues repeat their parent and are not independent evidence.'}
+        (out / filename).write_text(json.dumps(artifact, indent=2, allow_nan=False) + '\n')
 
 
 def plot_maps(result: dict, out: Path) -> Path:
@@ -524,7 +612,11 @@ def main(args: argparse.Namespace) -> None:
     scenes = {r["source_id"]: r for r in map(json.loads, args.scenes.open())}
     metadata = json.loads((args.labels.parent / "analysis.json").read_text())
     dimensions = metadata["dimensions"]
-    assert sha(args.scenes) == metadata["input_sha256"]["scenes"], "Changed scenes since action labels were joined"
+    canonical_scenes_path = Path(metadata['inputs']['run']) / 'scenes.jsonl'
+    assert sha(canonical_scenes_path) == metadata['input_sha256']['scenes'], 'Changed canonical label scenes'
+    canonical_scenes = {r['source_id']: r for r in map(json.loads, canonical_scenes_path.open())}
+    for sid, scene in scenes.items():
+        assert all(scene[key] == canonical_scenes[sid][key] for key in ('text', 'choice_text', 'source', 'eval_cluster')), f'Changed labelled scene: {sid}'
     label_rows = pq.read_table(args.labels).to_pylist()
     labels = {(r["source_id"], r["choice_id"]): r["scores"] for r in label_rows}
     assert len(labels) == len(label_rows), "Duplicate action label"
@@ -534,6 +626,7 @@ def main(args: argparse.Namespace) -> None:
     reference_pooled, ref_incomplete = pooled_logs(reference_rows, scenes, args.reference_draws)
     reference = {sid: p for (model, sid), p in reference_pooled.items()}
     results = []
+    noise_result = None
     comparison_status, comparison_incomplete = {}, []
     comparison_rows = []
     if args.comparisons:
@@ -542,8 +635,10 @@ def main(args: argparse.Namespace) -> None:
         comparison = {m: {s: p for (model, s), p in pooled.items() if model == m} for m in sorted({r["model"] for r in comparison_rows} - {REFERENCE})}
         selection = read_selection(args.selection, args.extreme_role, args.exclude_ids) if args.selection else None
         results.append(analyze("comparison", comparison, reference, scenes, scores, dimensions, args.out, args.landmarks, args.replicates, selection,
-                               map_options={"kind": args.map_kind, "shrinkage": args.shrinkage, "extrapolation": args.extrapolation}))
-        write_question_tables(results[-1], comparison_rows, reference_rows, scenes, scores, dimensions, args.out)
+                               map_options={"kind": args.map_kind, "shrinkage": args.shrinkage, "extrapolation": args.extrapolation}, include_derived=args.all_virtues))
+        write_question_tables(results[-1], comparison_rows, reference_rows, scenes, scores, dimensions, args.out, args.extreme_role)
+        noise_result = draw_noise_analysis(comparison_rows, reference_rows, results[-1], scenes, args.replicates, args.extreme_role)
+        (args.out / 'draw_noise.json').write_text(json.dumps(noise_result, indent=2, allow_nan=False) + '\n')
     control_rows, control_status = read_rows(args.control_reference, args.control_level, model=REFERENCE)
     assert {r['model'] for r in control_rows} == {REFERENCE}
     assert not set(args.control_draws_a) & set(args.control_draws_b), 'Self-control draws must be disjoint'
@@ -582,15 +677,15 @@ def main(args: argparse.Namespace) -> None:
             landmarks = [] if n == 0 else reserve['landmark'] if n == 100 else choose_roles(reserve['landmark'], control_base, n)['landmark']
             roles[source] = reserve | {'landmark': landmarks}
         results.append(analyze('self_' + name, control_model, control_base, scenes, scores, dimensions, args.out,
-                               n, args.replicates, role_overrides=roles, map_options=options))
+                               n, args.replicates, role_overrides=roles, map_options=options, include_derived=args.all_virtues))
     symmetric_selection_reference = {s: np.logaddexp(draw_logs[0][s], draw_logs[1][s]) - np.log(2) for s in common}
     scored_roles = {source: uncertain_with_extremes(reserve['dev'], symmetric_selection_reference, scenes) for source, reserve in reserved_roles.items()} if not args.control_selection else {}
     scored_variants = [('identity', {'kind': 'identity'}), ('shrunk100', {'kind': 'monotone', 'shrinkage': .5, 'extrapolation': 'unit'}), ('quantile', {'kind': 'quantile'})] if scored_roles else []
     for name, options in scored_variants:
         roles = {source: r | {'landmark': reserved_roles[source]['landmark'] if name != 'quantile' else []} for source, r in scored_roles.items()}
         results.append(analyze('scored_' + name, control_model, control_base, scenes, scores, dimensions, args.out,
-                               100, args.replicates, role_overrides=roles, map_options=options))
-    inputs = args.reference + args.comparisons + args.control_reference + [args.labels, args.labels.parent / "analysis.json", args.scenes, Path(__file__), ROOT / 'scripts/evaluation/score_choice_dimensions.py', ROOT / 'uv.lock'] + ([args.selection] if args.selection else []) + ([args.control_selection] if args.control_selection else []) + ([args.exclude_ids] if args.exclude_ids else [])
+                               100, args.replicates, role_overrides=roles, map_options=options, include_derived=args.all_virtues))
+    inputs = args.reference + args.comparisons + args.control_reference + [args.labels, args.labels.parent / "analysis.json", args.scenes, canonical_scenes_path, Path(__file__), ROOT / 'scripts/evaluation/score_choice_dimensions.py', ROOT / 'uv.lock'] + ([args.selection] if args.selection else []) + ([args.control_selection] if args.control_selection else []) + ([args.exclude_ids] if args.exclude_ids else [])
     self_diagnostics = []
     control_results = [r for r in results if r['name'].startswith(('self_', 'scored_'))]
     for r in control_results:
@@ -618,7 +713,8 @@ def main(args: argparse.Namespace) -> None:
     clean_control = bool(args.control_selection and args.control_level == '10k' and len(args.control_draws_a) == len(args.control_draws_b) == 2)
     gate_rows = [r for r in self_diagnostics if r['variant'] == 'self_quantile']
     gate = {r['source']: r['dev_only_calibrated_abs_nats'] <= r['dev_only_raw_abs_nats'] + 1e-12 for r in gate_rows}
-    primary_mode = 'calibrated' if clean_control and args.map_kind == 'quantile' and len(gate) == 2 and all(gate.values()) else 'raw'
+    primary_mode = 'calibrated' if not args.identity_primary and clean_control and args.map_kind == 'quantile' and len(gate) == 2 and all(gate.values()) else 'raw'
+    export_scored_rows(results, args.out, dimensions, args.extreme_role, primary_mode, args.control_draws_a, args.control_draws_b)
     original_variants = [r for r in control_results if r['name'].startswith('self_') and r['name'] not in ('self_orthogonal20', 'self_orthogonal100', 'self_quantile')]
     combined = {'name': 'self_variants', 'models': [r['name'] for r in original_variants], 'maps': {}, 'question_nats': []}
     for source in reserved_roles:
@@ -651,7 +747,10 @@ def main(args: argparse.Namespace) -> None:
                "scored_domain_selection": 'Symmetric mean of model/reference-side probabilities for exploratory control selection, or frozen prior-selected IDs when --control-selection is supplied.',
                "versions": {'numpy': np.__version__, 'scipy': scipy.__version__, 'matplotlib': matplotlib.__version__},
                "self_control_diagnostics": self_diagnostics,
-               "primary_mode": primary_mode,
+               "primary_mode": primary_mode, 'identity_primary_requested': args.identity_primary,
+               'all_virtues_included': args.all_virtues,
+               'label_family_counts': dict(Counter(d['family'] for d in dimensions if args.all_virtues or d['derived_from'] is None)),
+               'between_over_draw_noise': noise_result['summaries'] if noise_result else [],
                "quantile_clean_dev_gate": {'clean_same_budget_two_vs_two': clean_control, 'per_source': gate,
                                            'rule': 'Calibrated primary only for quantile, frozen prior-selected IDs, same 10k level, independent two-draw groups, and no dev-only mean absolute self-noise increase in either source. This is a point-estimate gate, not proof of non-inferiority. Raw identity is always reported.'},
                "self_control_split": 'Frozen prior-selected dev/control/extreme IDs; quantile fits only dev+extreme distributions, identity fits nothing.' if args.control_selection else 'Reserve 100 confidence-spanning landmark questions/source; 20 is a spanning subset. Full-heldout variants share exactly the same held-out IDs. Scored-domain variants use an uncertainty-selected subset plus 20 extremes, selected symmetrically from both control sides.',
@@ -667,6 +766,8 @@ def main(args: argparse.Namespace) -> None:
     if comparison_rows:
         demo = comparison_rows[0]
         logger.debug("## First normal-path comparison row (file order, not selected for effect)\n\n" + demo['trace'] + "\n\n```json\n" + json.dumps(demo, ensure_ascii=False, indent=2) + "\n```\n")
+    if noise_result:
+        logger.info('## Between-model variance / draw noise\n\n' + noise_result['method'] + '\n\n' + tabulate([[r['source'], r['role'], r['model_group'], r['pooled_between_over_draw_noise'], r['ci95'], r['questions']] for r in noise_result['summaries']], headers=['Source', 'Role', 'Models', 'Pooled ratio↑', '95% interval', 'Questions'], tablefmt='pipe', floatfmt='.2f') + '\n')
     logger.info(f"## Primary score mode\n\n{primary_mode}: raw means identity/no calibration; calibrated means quantile. Gate: {summary['quantile_clean_dev_gate']}. Both versions remain in all label rows.\n")
     logger.info("## DeepSeek self-control: paired question comparisons\n\n" + summary['self_control_split'] + " Shrunk maps use 50% identity and unit-slope extrapolation. Changes are paired game/topic-bootstrap intervals, with fitted maps fixed.\n\n" + tabulate([[r['variant'], r['source'], f"{r['change']:+.3f}", str([round(x, 3) for x in r['change_ci95']]), r['does_not_increase_point_self_noise']] for r in self_diagnostics], headers=['Variant', 'Source', 'Change in abs nats↓', '95% interval', 'No point increase'], tablefmt='pipe') + "\n")
     logger.info("## Dev-only self-control changes\n\n" + tabulate([[r['variant'], r['source'], r['dev_only_calibrated_abs_nats'] - r['dev_only_raw_abs_nats'], r['dev_only_change_ci95'], r['dev_only_questions']] for r in self_diagnostics if r['variant'].startswith('scored_') or args.control_selection], headers=['Variant', 'Source', 'Dev-only abs nats change↓', '95% interval', 'Dev questions'], tablefmt='pipe', floatfmt='.4f') + "\n")
@@ -717,6 +818,8 @@ if __name__ == "__main__":
     parser.add_argument("--draws", type=int, default=4)
     parser.add_argument("--landmarks", type=int, default=100)
     parser.add_argument("--replicates", type=int, default=1000)
+    parser.add_argument('--all-virtues', action='store_true', help='Include all80virtues and preserve derived_from metadata')
+    parser.add_argument('--identity-primary', action='store_true', help='Keep raw identity primary regardless of the exploratory quantile gate')
     parser.add_argument("--selection", type=Path)
     parser.add_argument('--extreme-role', choices=('extreme', 'landmark'), default='extreme')
     parser.add_argument('--exclude-ids', type=Path)
