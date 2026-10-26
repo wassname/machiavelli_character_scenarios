@@ -294,6 +294,9 @@ def write_question_tables(result: dict, comparison_rows: list[dict], reference_r
                 else:
                     q = models[model]
                     item['map_kind'] = q['map_kind']
+                    item['calibration_pair_fraction_above_fit'] = q['extrapolated_pairs'] / q['pairs']
+                    item['calibration_secondary_only'] = True
+                    item['calibration_reportable_role'] = q['role'] == 'dev'
                     for key in ('raw_logp', 'calibrated_logp', 'raw_nats', 'calibrated_nats'):
                         item[key] = dict(zip(options, q[key]))
                     item['geometric_probabilities'] = dict(zip(options, np.exp(q['raw_logp']).tolist()))
@@ -518,8 +521,47 @@ def draw_noise_analysis(comparison_rows: list[dict], reference_rows: list[dict],
             'method': 'Per model/question: mean add-one-smoothed log p across draws, before geometric-pool renormalization. Between = sample variance across model means, averaged over options. Noise of each model mean = within-model sample draw variance / its draw count, then averaged across options/models. Ratio 1 is the noise-only expectation under independent identical model distributions; ratio includes finite-sample noise and is not a significance test. Zero denominators stay null with explicit status. Pooled source/role ratio divides mean between variance by mean noise; intervals resample games/topics with fixed draws.'}
 
 
+def calibration_domain_diagnostics(results: list[dict], extreme_role: str) -> list[dict]:
+    rows = []
+    for result in results:
+        for source, maps in result['maps'].items():
+            for model, mapping in maps.items():
+                if mapping['kind'] == 'identity':
+                    continue
+                for role in sorted({q['role'] for q in result['question_nats'] if q['source'] == source and q['model'] == model}):
+                    qs = [q for q in result['question_nats'] if q['source'] == source and q['model'] == model and q['role'] == role]
+                    fraction = float(np.mean([q['extrapolated_pairs'] / q['pairs'] for q in qs]))
+                    rows.append({'run': result['name'], 'source': source, 'model': model, 'map_kind': mapping['kind'],
+                                 'role': extreme_role if role == 'extreme' else role,
+                                 'questions': len(qs), 'pairs': sum(q['pairs'] for q in qs),
+                                 'above_fit_pairs': sum(q['extrapolated_pairs'] for q in qs),
+                                 'question_weighted_pair_fraction_above_fit': fraction,
+                                 'pooled_pair_fraction_above_fit': sum(q['extrapolated_pairs'] for q in qs) / sum(q['pairs'] for q in qs),
+                                 'fit_upper_abs_log_odds': mapping['x'][-1],
+                                 'unit_slope_tail_offset': mapping['y'][-1] - mapping['x'][-1] if mapping['end_slope'] == 1 else None,
+                                 'flag_above_nominal_5pct_tail': fraction > .05 + 1e-12 if mapping['kind'] == 'quantile' else None,
+                                 'flag_high_extrapolation_fraction': fraction > .05 + 1e-12,
+                                 'flag_note': 'For quantile maps, above5% exceeds the nominal upper-tail mass at p95. For other maps this is only a 5% reporting heuristic. Neither is a validated error threshold. In-domain remapping can also bias control slopes.'})
+    return rows
+
+
+def self_control_interval_counts(results: list[dict]) -> list[dict]:
+    counts = []
+    for result in results:
+        if result['name'] not in ('self_identity', 'self_quantile'):
+            continue
+        mode = 'raw' if result['name'] == 'self_identity' else 'calibrated'
+        for source in result['sources']:
+            rows = [r for r in result['rows'] if r['source'] == source and r['role'] == 'control' and r['mode'] == mode
+                    and r['family'] == 'virtues' and r['dimension']['derived_from'] is None and r['ci95'] is not None]
+            if rows:
+                counts.append({'source': source, 'mode': mode, 'role': 'control', 'direct_virtues': len(rows),
+                               'above_zero': sum(r['ci95'][0] > 0 for r in rows), 'below_zero': sum(r['ci95'][1] < 0 for r in rows)})
+    return counts
+
+
 def export_scored_rows(results: list[dict], out: Path, dimensions: list[dict], extreme_role: str, primary_mode: str,
-                       control_draws_a: list[int], control_draws_b: list[int]) -> None:
+                       control_draws_a: list[int], control_draws_b: list[int], domains: list[dict]) -> None:
     comparisons = [r for r in results if r['name'] == 'comparison']
     if not comparisons:
         return
@@ -527,6 +569,7 @@ def export_scored_rows(results: list[dict], out: Path, dimensions: list[dict], e
     kinds = {m['kind'] for source in main['maps'].values() for m in source.values()}
     assert len(kinds) == 1
     kind = kinds.pop()
+    domain_lookup = {(r['run'], r['source'], r['model'], r['role']): r for r in domains}
     for mode, filename, self_name in (('raw', 'scored_identity.json', 'self_identity'),
                                       ('calibrated', 'scored_quantile.json' if kind == 'quantile' else f'scored_calibrated_{kind}.json', 'self_quantile' if kind == 'quantile' else None)):
         rows = []
@@ -538,15 +581,24 @@ def export_scored_rows(results: list[dict], out: Path, dimensions: list[dict], e
                 rows.append(r | {'model': 'DeepSeek self' if noise_floor else r['model'],
                                  'role': extreme_role if r['role'] == 'extreme' else r['role'],
                                  'derived': r['dimension']['derived_from'] is not None, 'noise_floor': noise_floor,
-                                 'noise_floor_draws': {'model': control_draws_a, 'reference': control_draws_b} if noise_floor else None})
+                                 'noise_floor_draws': {'model': control_draws_a, 'reference': control_draws_b} if noise_floor else None,
+                                 'reporting_status': 'primary_noise_floor' if mode == 'raw' and noise_floor else 'primary' if mode == 'raw'
+                                                     else 'secondary_dev_noise_floor' if r['role'] == 'dev' and noise_floor
+                                                     else 'secondary_dev' if r['role'] == 'dev' else 'diagnostic_not_a_finding',
+                                 'reportable_as_finding': not noise_floor and (mode == 'raw' or r['role'] == 'dev'),
+                                 'calibration_domain': domain_lookup[result['name'], r['source'], r['model'], extreme_role if r['role'] == 'extreme' else r['role']] if mode == 'calibrated' and kind != 'identity' else None})
         source_metadata = {s: info | {'roles': {(extreme_role if role == 'extreme' else role): ids for role, ids in info['roles'].items()},
                                       'cohorts': {(extreme_role if role == 'extreme' else role): value for role, value in info['cohorts'].items()}}
                            for s, info in main['sources'].items()}
         artifact = {'author': 'PI/OpenAI', 'mode': mode, 'primary': mode == primary_mode, 'dimensions': dimensions,
                     'sources': source_metadata, 'rows': rows,
                     'beta_note': 'Pooled within-question slope: sum_q mean_options(centered label * centered nats) / sum_q mean_options(centered label squared). Menus with larger label variance weigh more. Each label fit is marginal, not a unique causal virtue effect.',
+                    'calibration_reporting_policy': 'Raw identity is primary everywhere. Calibration is secondary for dev only; control and extreme rows are retained as diagnostics, not findings. In this run control self-scores show a systematic calibration artifact; raw also mixes decisiveness with values.',
                     'noise_floor_note': 'DeepSeek self pools independent draw groups, not a zero-valued reference. Its two-draw-vs-two-draw noise is larger than would be expected for independent four-draw-vs-four-draw means. CIs fix maps and replies; derived virtues repeat their parent and are not independent evidence.'}
         (out / filename).write_text(json.dumps(artifact, indent=2, allow_nan=False) + '\n')
+        if mode == 'calibrated' and kind == 'quantile':
+            dev_view = artifact | {'rows': [r for r in rows if r['role'] == 'dev'], 'view': 'secondary_dev_only'}
+            (out / 'scored_quantile_dev_secondary.json').write_text(json.dumps(dev_view, indent=2, allow_nan=False) + '\n')
 
 
 def plot_maps(result: dict, out: Path) -> Path:
@@ -713,8 +765,11 @@ def main(args: argparse.Namespace) -> None:
     clean_control = bool(args.control_selection and args.control_level == '10k' and len(args.control_draws_a) == len(args.control_draws_b) == 2)
     gate_rows = [r for r in self_diagnostics if r['variant'] == 'self_quantile']
     gate = {r['source']: r['dev_only_calibrated_abs_nats'] <= r['dev_only_raw_abs_nats'] + 1e-12 for r in gate_rows}
-    primary_mode = 'calibrated' if not args.identity_primary and clean_control and args.map_kind == 'quantile' and len(gate) == 2 and all(gate.values()) else 'raw'
-    export_scored_rows(results, args.out, dimensions, args.extreme_role, primary_mode, args.control_draws_a, args.control_draws_b)
+    primary_mode = 'raw'
+    domains = calibration_domain_diagnostics(results, args.extreme_role)
+    control_counts = self_control_interval_counts(results)
+    (args.out / 'calibration_domain.json').write_text(json.dumps({'author': 'PI/OpenAI', 'rows': domains, 'self_control_interval_counts': control_counts}, indent=2) + '\n')
+    export_scored_rows(results, args.out, dimensions, args.extreme_role, primary_mode, args.control_draws_a, args.control_draws_b, domains)
     original_variants = [r for r in control_results if r['name'].startswith('self_') and r['name'] not in ('self_orthogonal20', 'self_orthogonal100', 'self_quantile')]
     combined = {'name': 'self_variants', 'models': [r['name'] for r in original_variants], 'maps': {}, 'question_nats': []}
     for source in reserved_roles:
@@ -748,16 +803,20 @@ def main(args: argparse.Namespace) -> None:
                "versions": {'numpy': np.__version__, 'scipy': scipy.__version__, 'matplotlib': matplotlib.__version__},
                "self_control_diagnostics": self_diagnostics,
                "primary_mode": primary_mode, 'identity_primary_requested': args.identity_primary,
+               'calibration_domain_diagnostics': domains, 'self_control_interval_counts': control_counts,
+               'calibration_finding_roles': ['dev'], 'calibration_diagnostic_only_roles': ['control', args.extreme_role],
                'all_virtues_included': args.all_virtues,
                'label_family_counts': dict(Counter(d['family'] for d in dimensions if args.all_virtues or d['derived_from'] is None)),
                'between_over_draw_noise': noise_result['summaries'] if noise_result else [],
                "quantile_clean_dev_gate": {'clean_same_budget_two_vs_two': clean_control, 'per_source': gate,
-                                           'rule': 'Calibrated primary only for quantile, frozen prior-selected IDs, same 10k level, independent two-draw groups, and no dev-only mean absolute self-noise increase in either source. This is a point-estimate gate, not proof of non-inferiority. Raw identity is always reported.'},
+                                           'rule': 'Dev-only diagnostic: frozen prior-selected IDs, same 10k level, independent two-draw groups, no dev-only mean absolute self-noise increase. Passing does not authorize primary calibration because control transfer failed. Raw identity stays primary; calibration is dev-only secondary.'},
                "self_control_split": 'Frozen prior-selected dev/control/extreme IDs; quantile fits only dev+extreme distributions, identity fits nothing.' if args.control_selection else 'Reserve 100 confidence-spanning landmark questions/source; 20 is a spanning subset. Full-heldout variants share exactly the same held-out IDs. Scored-domain variants use an uncertainty-selected subset plus 20 extremes, selected symmetrically from both control sides.',
                "comparison_map_options": {"kind": args.map_kind, "shrinkage": args.shrinkage, "extrapolation": args.extrapolation},
                "method": "Average add-one-smoothed log p over draws; softmax gives geometric probability pool. Fit odd increasing isotonic-interpolated pairwise log-odds magnitude map, equal total weight per landmark question. Labels never enter calibration. Apply per source; mean mapped pair odds then softmax. Per-option nats = calibrated log p minus normalized DeepSeek pooled log p. Raw uses the same pooling. Each label is a separate marginal within-question regression: beta = sum_q mean_options(x_centered * nats_centered) / sum_q mean_options(x_centered squared). No question-variance normalization. Each question contributes mean option covariance and mean option variance. The final pooled within-question slope weights menus with larger label variance more; it is not an equal-weight average of per-question slopes. Vice polarity follows the named trait in source dimension metadata, not favorable polarity.",
                "uncertainty": "Game/topic-cluster bootstrap of held-out question sufficient statistics, reusing score_choice_dimensions.bootstrap. Draws and fitted landmark maps fixed; excludes calibration-fit uncertainty, label error, fresh-generation uncertainty, selection uncertainty and model-provider changes. Undefined coefficient/replicate remains null, never zero.",
-               "limitations": ["Noisy-regressor attenuation: paired y-on-x landmark fits can shrink odds toward uniform and add an opposition-to-DeepSeek component to label slopes; identity shrinkage reduces but does not eliminate this concern.", "Confidence magnitude and genuine preference strength are not identifiable from different models' landmark answers; even disjoint landmarks can remove real preferences.", "Sketch landmarks use matched questions and are not a substitute for the frozen project-specific dev/control/landmark set.", "Sources remain separate; all label fits are marginal correlated-label associations, not unique causal virtue effects.", "Failed replies and incomplete draw groups are reported/excluded explicitly; no score is substituted.", "Kendall tau-b compares within-question option ranks, not between-model moral scores; all-tied ranks are undefined.",
+               "limitations": [f'Control calibration transfer failed: DeepSeek self direct-virtue pointwise95% interval counts are {control_counts}. Calibrated controls/extremes are diagnostics, not findings. Calibration has no validity claim outside the fit domain; even in-domain remapping contributes to control bias.',
+                                'Raw nats mix decisiveness/confidence scale with value differences: a more even probability spread can give negative slopes on the actions favored by DeepSeek without reversing their rank.',
+                                "Noisy-regressor attenuation: paired y-on-x landmark fits can shrink odds toward uniform and add an opposition-to-DeepSeek component to label slopes; identity shrinkage reduces but does not eliminate this concern.", "Confidence magnitude and genuine preference strength are not identifiable from different models' landmark answers; even disjoint landmarks can remove real preferences.", "Sketch landmarks use matched questions and are not a substitute for the frozen project-specific dev/control/landmark set.", "Sources remain separate; all label fits are marginal correlated-label associations, not unique causal virtue effects.", "Failed replies and incomplete draw groups are reported/excluded explicitly; no score is substituted.", "Kendall tau-b compares within-question option ranks, not between-model moral scores; all-tied ranks are undefined.",
                                 "Quantile matching is transductive: it uses evaluated probability distributions themselves and removes any real overall decisiveness difference as well as confidence scale. It preserves direction, not preference strength.",
                                 "Orthogonal/Deming through-origin fit assumes equal x/y measurement error variances; draw-to-draw noise need not satisfy this across different models.",
                                 "Nonlinear mapped pair targets need not be transitive; row-mean projection preserves option order but generally cannot reproduce every fitted pair target for 3+ options.",
@@ -766,6 +825,7 @@ def main(args: argparse.Namespace) -> None:
     if comparison_rows:
         demo = comparison_rows[0]
         logger.debug("## First normal-path comparison row (file order, not selected for effect)\n\n" + demo['trace'] + "\n\n```json\n" + json.dumps(demo, ensure_ascii=False, indent=2) + "\n```\n")
+    logger.info('## Calibration domain and failed control transfer\n\nQuantile maps fit dev+extremes. Above-p95 continuation has unit slope but adds a fixed signed odds offset. Domain flags use question-weighted pair fractions above the last fit knot; above5% exceeds its nominal tail mass, not a validated error threshold. In-domain decisiveness remapping can also produce control artifacts.\n\n' + tabulate([[r['run'], r['source'], r['model'].split('/')[-1], r['role'], r['question_weighted_pair_fraction_above_fit'], r['flag_above_nominal_5pct_tail']] for r in domains], headers=['Run', 'Source', 'Model', 'Role', 'Pairs above fit', 'Flag'], tablefmt='pipe', floatfmt='.3f') + '\n\n' + json.dumps(control_counts, indent=2) + '\n')
     if noise_result:
         logger.info('## Between-model variance / draw noise\n\n' + noise_result['method'] + '\n\n' + tabulate([[r['source'], r['role'], r['model_group'], r['pooled_between_over_draw_noise'], r['ci95'], r['questions']] for r in noise_result['summaries']], headers=['Source', 'Role', 'Models', 'Pooled ratio↑', '95% interval', 'Questions'], tablefmt='pipe', floatfmt='.2f') + '\n')
     logger.info(f"## Primary score mode\n\n{primary_mode}: raw means identity/no calibration; calibrated means quantile. Gate: {summary['quantile_clean_dev_gate']}. Both versions remain in all label rows.\n")
