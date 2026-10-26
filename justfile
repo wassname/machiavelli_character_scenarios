@@ -38,6 +38,10 @@ choice-pilot run="outputs/20261026_differentiated_pilot_v2" preview=".local/choi
     uv run --locked python scripts/checks/check_differentiated_pilot.py --run "{{run}}"
     uv run --script scripts/evaluation/plot_differentiated_pilot.py --run "{{run}}" --out "{{preview}}"
 
+# PI/OpenAI: Normalize labels within each question and plot saved historical/pilot replies; no inference.
+choice-question-normalization:
+    OPENBLAS_NUM_THREADS=1 uv run --locked --with matplotlib python scripts/evaluation/question_normalized_profiles.py
+
 # PI/OpenAI: Restore displayed choices without model calls.
 prepare out:
     uv run --locked python scripts/data/prepare_inputs.py --out "{{out}}"
