@@ -51,7 +51,10 @@ def reserve_unknown_fee(event: dict, out: Path) -> float:
 
 
 async def run_requests(packets: list[dict], out: Path, *, max_new_usd: float, concurrency: int = 8,
-                       key_source: str = "env", refresh: bool = False, cache_write: bool = True) -> dict:
+                       key_source: str = "env", refresh: bool = False, cache_write: bool = True,
+                       project_cap_usd: float = PROJECT_CAP_USD,
+                       evaluation_cap_usd: float = EVALUATION_CAP_USD) -> dict:
+    assert math.isfinite(project_cap_usd) and math.isfinite(evaluation_cap_usd)
     ledger = ROOT / ".local/billing.jsonl"
     ledger.parent.mkdir(parents=True, exist_ok=True)
     history = [json.loads(line) for line in ledger.open()] if ledger.exists() else []
@@ -95,8 +98,8 @@ async def run_requests(packets: list[dict], out: Path, *, max_new_usd: float, co
                         if cached:
                             counts["cache_hits"] += 1
                         else:
-                            assert project_before + new + reserved + outstanding(ROOT) + RESERVATION <= PROJECT_CAP_USD, "Cumulative project cap reached"
-                            assert scope_before + new + reserved + outstanding(ROOT, SCOPE) + RESERVATION <= EVALUATION_CAP_USD, "Evaluation scope cap reached"
+                            assert project_before + new + reserved + outstanding(ROOT) + RESERVATION <= project_cap_usd, "Cumulative project cap reached"
+                            assert scope_before + new + reserved + outstanding(ROOT, SCOPE) + RESERVATION <= evaluation_cap_usd, "Evaluation scope cap reached"
                             assert new + uncertain + reserved + RESERVATION <= max_new_usd, "This evaluation run's cap reached"
                             reserved += RESERVATION
                             try:
@@ -105,8 +108,8 @@ async def run_requests(packets: list[dict], out: Path, *, max_new_usd: float, co
                                         while (delay := model_next_start.get(payload["model"], 0) - clock()) > 0:
                                             await asyncio.sleep(delay)
                                         model_next_start[payload["model"]] = clock() + packet["metadata"].get("minimum_request_interval_seconds", 0)
-                                    assert project_before + new + reserved + outstanding(ROOT) <= PROJECT_CAP_USD, "Project cap reached during retries"
-                                    assert scope_before + new + reserved + outstanding(ROOT, SCOPE) <= EVALUATION_CAP_USD, "Evaluation cap reached during retries"
+                                    assert project_before + new + reserved + outstanding(ROOT) <= project_cap_usd, "Project cap reached during retries"
+                                    assert scope_before + new + reserved + outstanding(ROOT, SCOPE) <= evaluation_cap_usd, "Evaluation cap reached during retries"
                                     assert new + uncertain + reserved <= max_new_usd, "This evaluation run's cap reached during retries"
                                     event = {"time": datetime.now(timezone.utc).isoformat(), "request_key": key,
                                              "metadata": packet["metadata"], "attempt": attempt, "request": payload}

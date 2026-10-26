@@ -1,0 +1,106 @@
+{
+  "author": "PI/OpenAI",
+  "scope": "action-choice-eval-v1",
+  "protocol": "own-judgement-v4",
+  "observed_at": "2026-10-26",
+  "comparison_note": "Four new models, exact repeated prompts; low native reasoning using declared 1024-token budget. Provider support and effective usage checked in smoke; not matched to historical role-play actors.",
+  "seed": 20261023,
+  "option_order_policy": "shuffle-reverse-v1",
+  "option_order_seed": 20261025,
+  "max_tokens": 2048,
+  "models": {
+    "meta/muse-spark-1.3-contributor": {
+      "display_name": "Muse",
+      "provider": {
+        "only": [
+          "meta"
+        ],
+        "allow_fallbacks": false,
+        "require_parameters": true
+      },
+      "provider_name": "Meta",
+      "sampling_parameters": {
+        "temperature": 0
+      },
+      "reasoning": {
+        "enabled": true,
+        "max_tokens": 1024,
+        "exclude": false
+      },
+      "input_usd_per_million": 0.09999999999999999,
+      "output_usd_per_million": 0.19999999999999998,
+      "registry_endpoint": "https://openrouter.ai/api/v1/models/meta/muse-spark-1.3-contributor/endpoints"
+    },
+    "qwen/qwen3.8-27b": {
+      "display_name": "Qwen",
+      "provider": {
+        "only": [
+          "deepinfra/bf16"
+        ],
+        "allow_fallbacks": false,
+        "require_parameters": true,
+        "quantizations": [
+          "bf16"
+        ]
+      },
+      "provider_name": "DeepInfra",
+      "sampling_parameters": {
+        "seed": 20261026,
+        "temperature": 0
+      },
+      "reasoning": {
+        "enabled": true,
+        "max_tokens": 1024,
+        "exclude": false
+      },
+      "input_usd_per_million": 0.15,
+      "output_usd_per_million": 1.875,
+      "registry_endpoint": "https://openrouter.ai/api/v1/models/qwen/qwen3.8-27b/endpoints"
+    },
+    "google/gemini-3.8-flash": {
+      "display_name": "Gemini",
+      "provider": {
+        "only": [
+          "google-ai-studio"
+        ],
+        "allow_fallbacks": false,
+        "require_parameters": true
+      },
+      "provider_name": "Google AI Studio",
+      "sampling_parameters": {
+        "seed": 20261026,
+        "temperature": 0
+      },
+      "reasoning": {
+        "enabled": true,
+        "max_tokens": 1024,
+        "exclude": false
+      },
+      "input_usd_per_million": 0.75,
+      "output_usd_per_million": 3.75,
+      "registry_endpoint": "https://openrouter.ai/api/v1/models/google/gemini-3.8-flash/endpoints"
+    },
+    "openai/gpt-5.6-luna": {
+      "display_name": "Luna",
+      "provider": {
+        "only": [
+          "openai"
+        ],
+        "allow_fallbacks": false,
+        "require_parameters": true
+      },
+      "provider_name": "OpenAI",
+      "sampling_parameters": {
+        "seed": 20261026
+      },
+      "reasoning": {
+        "enabled": true,
+        "max_tokens": 1024,
+        "exclude": false
+      },
+      "input_usd_per_million": 0.19999999999999998,
+      "output_usd_per_million": 1.2,
+      "registry_endpoint": "https://openrouter.ai/api/v1/models/openai/gpt-5.6-luna/endpoints"
+    }
+  }
+}
