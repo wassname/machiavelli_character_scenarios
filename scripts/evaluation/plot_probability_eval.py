@@ -541,7 +541,8 @@ def page_random(tables: Path, out: Path, title: str) -> Path:
               img(cal_png), cal_counts,
               '<h2>Behaviours and D&D axes, raw vs calibrated (split-half)</h2>',
               '<p>Same split-half maps. Behaviours are not sign-flipped: blue = more of the named behaviour (e.g. violence), which is not always better. '
-              '"DS self" = DeepSeek draw 1 minus draw 2, calibrated with maps refit after swapping draw labels. '
+              '"DS self" = DeepSeek draw 1 minus draw 2. Its dots and intervals come from a bootstrap that resamples games/topics and refits the maps, with its single draw per side fixed, so they omit draw noise; '
+              'a separate draw-swap permutation test is in calibration_heldout/dimension_rows.json. Behaviours use 499 Gemini everyday questions, 500 otherwise. '
               'D&D axes keep the source orientation (order = lawful, morality = good) and use only questions with complete D&D labels (about 350-376 per source).</p>',
               img(beh_png), beh_counts, dnd_table,
               '<details><summary>Virtues with intervals</summary>' + img(figs[0]) + '</details>',
