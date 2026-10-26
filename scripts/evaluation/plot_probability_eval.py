@@ -430,19 +430,14 @@ def overall_level(tables: Path) -> str:
                                     'Spread of stated % (0 = certain, 1 = even)', 'Questions'], tablefmt='html')
 
 
-def calibrated_virtues(tables: Path, out: Path) -> tuple[Path, str]:
-    # Per-virtue raw vs split-half calibrated label-score difference vs DeepSeek, from calibration_heldout/virtue_rows.json.
-    rows = json.loads((tables.parent / 'calibration_heldout' / 'virtue_rows.json').read_text())['rows']
+def calibrated_heatmap(rows: list[dict], label: dict, path: Path, suptitle: str, cbar: str, clip: float, height: float) -> tuple[Path, str]:
+    # Raw vs split-half calibrated difference vs DeepSeek per dimension, one panel per source; dot = 95% interval excludes 0.
     views = {'stated_raw': 'raw', 'crossfit_quantile': 'calibrated'}
     models = sorted({short(r['model']) for r in rows}, key=list(COLORS).index)
-    ids = sorted({r['dimension']['id'] for r in rows})
-    # Row values are favourable-signed (virtue_rows applies favorable_multiplier): higher = more virtue, or less of a vice.
-    label = {r['dimension']['id']: re.sub(r'[^\x00-\u024f]', '', f"{r['dimension']['label']}{' (vice)' if r['dimension']['kind'] == 'vices' else ''} [{r['dimension']['tradition']}]").replace(', )', ')') for r in rows}
     get = {(r['source'], short(r['model']), r['view'], r['dimension']['id']): r for r in rows if r['view'] in views}
-    order = sorted(ids, key=lambda i: np.mean([get[s, m, 'stated_raw', i]['mean_expected_label_difference'] for s in SOURCES for m in models]))
+    order = sorted(label, key=lambda i: np.mean([get[s, m, 'stated_raw', i]['mean_expected_label_difference'] for s in SOURCES for m in models if m != 'DeepSeek self']))
     cols = [(v, m) for v in views for m in models]
-    clip = .06
-    fig, axs = plt.subplots(1, 2, figsize=(13, 17), constrained_layout=True)
+    fig, axs = plt.subplots(1, 2, figsize=(14, height), constrained_layout=True)
     counts = []
     for ax, (src, name) in zip(axs, SOURCES.items()):
         M = np.array([[get[src, m, v, i]['mean_expected_label_difference'] for v, m in cols] for i in order])
@@ -451,22 +446,44 @@ def calibrated_virtues(tables: Path, out: Path) -> tuple[Path, str]:
         yy, xx = np.nonzero(sig)
         ax.plot(xx, yy, 'k.', ms=3)
         ax.axvline(len(models) - .5, color='k', lw=1.5)
-        ax.set_xticks(range(len(cols)), [m for v, m in cols], fontsize=8)
+        ax.set_xticks(range(len(cols)), [m.replace('DeepSeek self', 'DS self') for v, m in cols], fontsize=8)
         ax.tick_params(axis='x', top=True, labeltop=True)
         for k, v in enumerate(views.values()):
-            ax.text((k + .5) * len(models) - .5, -2.2, v, ha='center', fontsize=10)
+            ax.text((k + .5) * len(models) - .5, -.06 * len(order) - 1, v, ha='center', fontsize=10)
         ax.set_yticks(range(len(order)), [label[i] for i in order], fontsize=7)
         ax.set_title(name, loc='left', pad=50)
-        for j, (v, m) in enumerate(cols):
+        for v, m in cols:
             ci = [get[src, m, v, i]['ci95'] for i in order]
             counts.append([name, m, views[v], f'{sum(lo > 0 for lo, hi in ci)}/{len(ci)}', f'{sum(hi < 0 for lo, hi in ci)}/{len(ci)}'])
-    fig.colorbar(im, ax=axs, shrink=.25, label=f'Favourable label-score difference vs DeepSeek (clipped at \u00b1{clip})')
-    fig.suptitle('Per virtue vs DeepSeek, raw and split-half calibrated (blue = more virtuous, for vices = less of the vice; dot = 95% interval excludes 0)', fontsize=11)
-    path = out / 'virtues_random_calibrated.png'
+    fig.colorbar(im, ax=axs, shrink=.4, label=f'{cbar} (clipped at \u00b1{clip})')
+    fig.suptitle(suptitle, fontsize=11)
     fig.savefig(path, dpi=110)
     plt.close(fig)
-    table = tabulate(counts, headers=['Source', 'Model', 'View', 'Interval above 0', 'Interval below 0'], tablefmt='html')
-    return path, table
+    return path, tabulate(counts, headers=['Source', 'Model', 'View', 'Interval above 0', 'Interval below 0'], tablefmt='html')
+
+
+def calibrated_virtues(tables: Path, out: Path) -> tuple[Path, str]:
+    # Values in virtue_rows.json are favourable-signed (favorable_multiplier applied): higher = more virtue, or less of a vice.
+    rows = json.loads((tables.parent / 'calibration_heldout' / 'virtue_rows.json').read_text())['rows']
+    label = {r['dimension']['id']: re.sub(r'[^\x00-\u024f]', '', f"{r['dimension']['label']}{' (vice)' if r['dimension']['kind'] == 'vices' else ''} [{r['dimension']['tradition']}]").replace(', )', ')') for r in rows}
+    return calibrated_heatmap(rows, label, out / 'virtues_random_calibrated.png',
+                              'Per virtue vs DeepSeek, raw and split-half calibrated (blue = more virtuous, for vices = less of the vice; dot = 95% interval excludes 0)',
+                              'Favourable label-score difference vs DeepSeek', .06, 17)
+
+
+def calibrated_behaviours(tables: Path, out: Path) -> tuple[Path, str, str]:
+    # Behaviour values = more of the named behaviour (not always better); D&D in source orientation. From dimension_rows.json.
+    rows = json.loads((tables.parent / 'calibration_heldout' / 'dimension_rows.json').read_text())['rows']
+    beh = [r for r in rows if r['dimension']['family'] == 'behaviours']
+    assert all(r['dimension']['favorable_multiplier'] == 1 for r in rows)
+    label = {r['dimension']['id']: r['dimension']['label'] for r in beh}
+    path, counts = calibrated_heatmap(beh, label, out / 'behaviours_random_calibrated.png',
+                                      'Per behaviour vs DeepSeek, raw and split-half calibrated (blue = more of the behaviour, not always better; dot = 95% interval excludes 0)',
+                                      'Label-score difference vs DeepSeek', .03, 8)
+    dnd = [[SOURCES[r['source']], short(r['model']), r['dimension']['label'], {'stated_raw': 'raw', 'crossfit_quantile': 'calibrated'}[r['view']],
+            f"{r['mean_expected_label_difference']:+.4f} ({r['ci95'][0]:+.4f} to {r['ci95'][1]:+.4f})", r['questions']]
+           for r in sorted((r for r in rows if r['dimension']['family'] == 'dnd'), key=lambda r: (r['source'], r['dimension']['label'], list(COLORS).index(short(r['model'])), r['view'] != 'stated_raw'))]
+    return path, counts, tabulate(dnd, headers=['Source', 'Model', 'D&D axis', 'View', 'Difference vs DeepSeek (95%)', 'Questions'], tablefmt='html')
 
 
 def page_random(tables: Path, out: Path, title: str) -> Path:
@@ -477,6 +494,7 @@ def page_random(tables: Path, out: Path, title: str) -> Path:
     figs = render(expected, None, out, 'expected', role)
     h, counts = heatmap(expected, out, 'expected', role)
     cal_png, cal_counts = calibrated_virtues(tables, out)
+    beh_png, beh_counts, dnd_table = calibrated_behaviours(tables, out)
     count_table = tabulate([[src, m, f'{pos}/{n}', f'{neg}/{n}'] for src, m, pos, neg, n in counts],
                            headers=['Source', 'Model', 'Virtues: interval above 0', 'Virtues: interval below 0'], tablefmt='html')
     img = lambda p: f'<img src="{p.name}" alt="{escape(p.stem)}">'
@@ -521,6 +539,11 @@ def page_random(tables: Path, out: Path, title: str) -> Path:
               'Rows are sorted by the mean raw value over models and sources. '
               'The labels still move together, so counts overstate independent evidence; compare the raw and calibrated halves of each panel rather than counting dots.</p>',
               img(cal_png), cal_counts,
+              '<h2>Behaviours and D&D axes, raw vs calibrated (split-half)</h2>',
+              '<p>Same split-half maps. Behaviours are not sign-flipped: blue = more of the named behaviour (e.g. violence), which is not always better. '
+              '"DS self" = DeepSeek draw 1 minus draw 2, calibrated with maps refit after swapping draw labels. '
+              'D&D axes keep the source orientation (order = lawful, morality = good) and use only questions with complete D&D labels (about 350-376 per source).</p>',
+              img(beh_png), beh_counts, dnd_table,
               '<details><summary>Virtues with intervals</summary>' + img(figs[0]) + '</details>',
               '<details open><summary>Behaviours, including violence</summary>' + img(figs[1]) + '</details>',
               '<h2>Example questions (hash-chosen, not typical or best)</h2>', ''.join(ex),
