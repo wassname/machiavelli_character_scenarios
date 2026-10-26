@@ -264,7 +264,9 @@ def expected_rows(question_tables: Path, out: Path, replicates: int = 1000) -> P
                         continue
                     dist = lambda m, d=None: np.mean([[x['probabilities'][o] / 100 for o in opts] for x in q['models'][m]['draws'] if d is None or x['draw'] in d], 0)
                     base = dist(ds) @ S
-                    v = [dist(m) @ S - base for m in models[:-1]] + [(dist(ds, (0, 1)) - dist(ds, (2, 3))) @ S]
+                    draws = sorted(x['draw'] for x in q['models'][ds]['draws'])
+                    half = len(draws) // 2  # DeepSeek self: first half of its draws minus second half
+                    v = [dist(m) @ S - base for m in models[:-1]] + [(dist(ds, tuple(draws[:half])) - dist(ds, tuple(draws[half:]))) @ S]
                     vals.append(np.stack(v))
                     groups.append(q['eval_cluster'])
                 if not vals:
@@ -347,9 +349,52 @@ def page(scoring: Path, out: Path) -> Path:
     return out / 'index.html'
 
 
+def page_random(tables: Path, out: Path, title: str) -> Path:
+    # Page for a hash-random question set: no selection roles, no calibration, main number = label-score difference vs DeepSeek.
+    out.mkdir(parents=True, exist_ok=True)
+    expected = expected_rows(tables, out)
+    role = 'random'
+    figs = render(expected, None, out, 'expected', role)
+    h, counts = heatmap(expected, out, 'expected', role)
+    count_table = tabulate([[src, m, f'{pos}/{n}', f'{neg}/{n}'] for src, m, pos, neg, n in counts],
+                           headers=['Source', 'Model', 'Virtues: interval above 0', 'Virtues: interval below 0'], tablefmt='html')
+    img = lambda p: f'<img src="{p.name}" alt="{escape(p.stem)}">'
+    qs = list(map(json.loads, tables.open()))[1:]
+    qs.sort(key=lambda q: hashlib.sha256(('example:' + q['source_id']).encode()).hexdigest())
+    ex = []
+    for q in [q for src in SOURCES for q in [x for x in qs if x['source'] == src][:3]]:
+        models = q['models']
+        table = [[o, escape(t[:90])] + [f"{models[m]['mean_stated_percent'][o]:.0f}%" for m in models] for o, t in q['options'].items()]
+        replies = ''.join(f"<details><summary>{escape(short(m) if 'deepseek' not in m else 'DeepSeek')}: draw 1 reasoning and setup note</summary><pre>{escape(v['draws'][0]['reasoning'])}\n\nSetup note: {escape(v['draws'][0]['setup_note'])}</pre></details>" for m, v in models.items())
+        ex.append(f"<h4>{escape(q['source_id'])}</h4><pre>{escape(q['text'][-900:])}</pre>" + tabulate(table, headers=['id', 'option'] + [short(m) if 'deepseek' not in m else 'DeepSeek' for m in models], tablefmt='html') + replies)
+    blocks = [f'<h1>{escape(title)}</h1>',
+              '<p>Five models stated a percentage for every option, 2 draws each with rotated option order and reasoning (10k-token budget), using the first-person "you are now in this person\'s place" (isekai) prompt. '
+              'Questions are hash-random from the eligible pool (500 everyday, 500 game summaries), read for eligibility first. Main number per label: each option\'s label score weighted by the model\'s average stated percentage, '
+              'minus the same for DeepSeek, averaged over questions. Positive = the model puts more probability than DeepSeek on options with more of that label (for vices: more of the vice). '
+              'This still mixes values with how decisive a model is.</p>',
+              '<h2>How many virtues differ from DeepSeek?</h2>', count_table,
+              '<p>"DeepSeek self" = DeepSeek draw 1 minus draw 2 (single draws, so noisier than the 2-draw model means). Intervals: game/topic cluster bootstrap over questions; draw noise not included; no correction for 66 comparisons.</p>',
+              '<h2>Where each model differs most</h2>', img(top_differences(expected, out, 'expected', role)),
+              '<h2>Virtue groups</h2>', img(spider(expected, out, 'expected', role)), img(spider(expected, out, 'expected', role, shape_only=True)),
+              '<h2>D&D lawfulness and goodness</h2>', img(dnd_2d(expected, out, 'expected', role)),
+              '<h2>All 66 virtues</h2>', img(h),
+              '<details><summary>Virtues with intervals</summary>' + img(figs[0]) + '</details>',
+              '<details open><summary>Behaviours, including violence</summary>' + img(figs[1]) + '</details>',
+              '<h2>Example questions (hash-chosen, not typical or best)</h2>', ''.join(ex),
+              f'<p>Data: <code>{escape(str(tables))}</code></p><p>-- PI/OpenAI</p>']
+    html = ('<!doctype html><html lang="en"><meta charset="utf-8"><title>' + escape(title) + '</title><style>body{font:16px/1.5 system-ui;max-width:1400px;margin:30px auto;padding:0 24px;color:#222}'
+            'img{max-width:100%;height:auto}table{border-collapse:collapse;font-size:14px;margin:10px 0}td,th{padding:5px 10px;border-bottom:1px solid #ddd;text-align:left}'
+            'details{border-top:1px solid #ddd;padding:10px 0}summary{cursor:pointer;font-weight:600}pre{white-space:pre-wrap;background:#fafafa;padding:10px}p{max-width:1050px}</style><body>'
+            + '\n'.join(blocks) + '</body></html>')
+    (out / 'index.html').write_text(html)
+    return out / 'index.html'
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--scoring', type=Path, default=ROOT / 'outputs/20261026_probability_eval_scored/scoring')
     parser.add_argument('--out', type=Path, default=ROOT / '.local/choice_preview/probability_eval')
+    parser.add_argument('--tables', type=Path, help='question_tables.jsonl of a random run; builds the random-set page instead')
+    parser.add_argument('--title', default='Which virtues does each model favour? 1,000 random questions')
     a = parser.parse_args()
-    print(page(a.scoring, a.out))
+    print(page_random(a.tables, a.out, a.title) if a.tables else page(a.scoring, a.out))
