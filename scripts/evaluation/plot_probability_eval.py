@@ -388,7 +388,7 @@ def overall_level(tables: Path) -> str:
             # top option of each draw; tied tops are averaged (2 of 9,999 draws in the random run)
             choice = {m: [np.mean([v[opts.index(o)] for o, p in x['probabilities'].items() if p == max(x['probabilities'].values())]) for x in q['models'][m]['draws']] for m in q['models']}
             entropy = {m: [-sum(p / 100 * np.log(p / 100) for p in x['probabilities'].values() if p > 0) / np.log(len(opts)) for x in q['models'][m]['draws']] for m in q['models']}
-            def row(pick):  # pick(m, n) -> draw indices to use for model m with n draws
+            def row(pick, level=level, choice=choice, entropy=entropy):  # pick(m, n) -> draw indices; defaults bind THIS question's data
                 lv = {m: np.mean(np.array(level[m])[pick(m, len(level[m]))]) for m in level}
                 ch = {m: np.mean(np.array(choice[m])[pick(m, len(choice[m]))]) for m in choice}
                 half = len(level[ds]) // 2
