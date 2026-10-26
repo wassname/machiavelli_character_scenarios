@@ -103,7 +103,8 @@ def parse(record: dict, config: dict) -> dict:
     result = record['metadata'] | {'request_key': record['request_key'], 'cache_hit': record['cache_hit']}
     body = record['response']
     if record['http_status'] != 200 or 'error' in body:
-        return result | {'status': 'infrastructure_error', 'error': body}
+        policy = 'error' in body and body['error'].get('metadata', {}).get('error_type') == 'content_policy_violation'
+        return result | {'status': 'api_refusal' if policy else 'infrastructure_error', 'error': body}
     assert body['provider'] == config['models'][result['model']]['provider_name'], body['provider']
     assert body['model'].startswith(result['model']), 'Unexpected served model'
     choice = body['choices'][0]

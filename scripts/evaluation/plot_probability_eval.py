@@ -86,7 +86,7 @@ def render(scores: Path, scenes_path: Path, out: Path, mode: str, role: str) -> 
         axs[0].legend(loc='upper left', bbox_to_anchor=(0, 1.0), ncol=len({short(r['model']) for r in rows}), frameon=True, framealpha=.95, fontsize=8, markerscale=1.5)
         fig.suptitle(f'{family.capitalize()}: which options does each model put more probability on than DeepSeek? ({mode}, {role} questions)', fontsize=12)
         fig.supxlabel('Positive = the model gives more probability than DeepSeek to options scoring higher on this label (vices: more of the named vice). '
-                      'Lines: 95% game/topic cluster bootstrap over questions (draw noise not included). Arrows: the interval (or the point, drawn at the edge) runs past the axis. '
+                      + ('Lines: 95% two-level bootstrap (games/topics, then draws; includes draw noise). ' if mode == 'expected' else 'Lines: 95% game/topic cluster bootstrap over questions (draw noise not included). ') + 'Arrows: the interval (or the point, drawn at the edge) runs past the axis. '
                       '"DeepSeek self" = DeepSeek draws 1-2 vs 3-4, an empirical noise check.', fontsize=9)
         path = out / f'{family}_{role}_{mode}.png'
         fig.savefig(path, dpi=120, bbox_inches='tight')
@@ -124,7 +124,7 @@ def heatmap(scores: Path, out: Path, mode: str, role: str) -> tuple[Path, list[l
     axs[0].set_yticks(range(len(dims)), [f"{d['label']} [{d.get('tradition', '')}]" + (' \u2022 vice' if d['kind'] == 'vices' else '') for d in dims], fontsize=7)
     fig.colorbar(im, ax=axs, shrink=.3, label=f'{UNIT[mode]} (clipped at \u00b1{clip:.2g})')
     fig.suptitle(f'66 virtues, {role} questions ({mode}): blue = model puts more probability than DeepSeek on options scoring higher on this label\n(for rows marked vice: more of the vice)', fontsize=10)
-    fig.supxlabel('Dot = 95% game/topic bootstrap interval excludes 0 (draw noise not included). "DeepSeek self" = DeepSeek draws 1-2 vs 3-4, an empirical noise check.', fontsize=8)
+    fig.supxlabel('Dot = 95% interval excludes 0 (' + ('two-level bootstrap, includes draw noise' if mode == 'expected' else 'game/topic bootstrap, draw noise not included') + '). "DeepSeek self" = first half of DeepSeek draws vs second half, an empirical noise check.', fontsize=8)
     path = out / f'heatmap_virtues_{role}_{mode}.png'
     fig.savefig(path, dpi=130, bbox_inches='tight')
     plt.close(fig)
@@ -241,9 +241,9 @@ def examples(question_tables: Path, k: int = 6) -> str:
             'calibrated nats vs DeepSeek in brackets.</p>' + ''.join(blocks))
 
 
-def expected_rows(question_tables: Path, out: Path, replicates: int = 1000) -> Path:
+def expected_rows(question_tables: Path, out: Path, replicates: int = 300) -> Path:
     # No division by label variance: per question, (model's mean stated distribution - DeepSeek's) @ option label scores.
-    # DeepSeek self = mean of draws 1-2 minus mean of draws 3-4. Equal question weight; game/topic cluster bootstrap.
+    # DeepSeek self = first half of its draws minus second half. Equal question weight; two-level bootstrap (clusters, then draws).
     lines = list(map(json.loads, question_tables.open()))
     dims = lines[0]['_meta']['dimensions']
     qs = lines[1:]
@@ -254,7 +254,7 @@ def expected_rows(question_tables: Path, out: Path, replicates: int = 1000) -> P
         for role in sorted({q['role'] for q in qs}):
             for family in ('virtues', 'behaviours', 'dnd'):
                 ix = [i for i, d in enumerate(dims) if d['family'] == family]
-                vals, groups = [], []
+                vals, groups, per_draw = [], [], []
                 for q in qs:
                     if q['source'] != src or q['role'] != role:
                         continue
@@ -262,17 +262,32 @@ def expected_rows(question_tables: Path, out: Path, replicates: int = 1000) -> P
                     S = np.array([q['option_scores'][o] for o in opts], float)[:, ix]
                     if not np.isfinite(S).all():
                         continue
-                    dist = lambda m, d=None: np.mean([[x['probabilities'][o] / 100 for o in opts] for x in q['models'][m]['draws'] if d is None or x['draw'] in d], 0)
-                    base = dist(ds) @ S
-                    draws = sorted(x['draw'] for x in q['models'][ds]['draws'])
-                    half = len(draws) // 2  # DeepSeek self: first half of its draws minus second half
-                    v = [dist(m) @ S - base for m in models[:-1]] + [(dist(ds, tuple(draws[:half])) - dist(ds, tuple(draws[half:]))) @ S]
+                    # per draw: stated distribution @ label scores, for every model including DeepSeek
+                    pd = {m: np.stack([np.array([x['probabilities'][o] / 100 for o in opts]) @ S for x in sorted(q['models'][m]['draws'], key=lambda x: x['draw'])]) for m in q['models']}
+                    half = len(pd[ds]) // 2  # DeepSeek self: first half of its draws minus second half
+                    v = [pd[m].mean(0) - pd[ds].mean(0) for m in models[:-1]] + [pd[ds][:half].mean(0) - pd[ds][half:].mean(0)]
                     vals.append(np.stack(v))
+                    per_draw.append(pd)
                     groups.append(q['eval_cluster'])
                 if not vals:
                     continue
                 v = np.stack(vals)
-                b = bootstrap(v, groups, replicates)
+                # Two-level bootstrap: resample games/topics, then each model's draws within each question, so draw noise is in the interval.
+                rng = np.random.default_rng(20261027)
+                clusters = sorted(set(groups))
+                members = {c: [i for i, g in enumerate(groups) if g == c] for c in clusters}
+                b = np.empty((replicates, len(models), len(ix)))
+                for r in range(replicates):
+                    pick = [i for c in rng.choice(clusters, len(clusters)) for i in members[c]]
+                    acc = np.zeros((len(models), len(ix)))
+                    for i in pick:
+                        pd = per_draw[i]
+                        mean = {m: pd[m][rng.integers(0, len(pd[m]), len(pd[m]))].mean(0) for m in pd}
+                        dsd = pd[ds]
+                        h = len(dsd) // 2
+                        self_diff = dsd[rng.integers(0, h, h)].mean(0) - dsd[h + rng.integers(0, len(dsd) - h, len(dsd) - h)].mean(0)
+                        acc += np.stack([mean[m] - mean[ds] for m in models[:-1]] + [self_diff])
+                    b[r] = acc / len(pick)
                 lo, hi = np.quantile(b, [.025, .975], axis=0)
                 for mi, m in enumerate(models):
                     for j, k in enumerate(ix):
@@ -349,6 +364,43 @@ def page(scoring: Path, out: Path) -> Path:
     return out / 'index.html'
 
 
+def overall_level(tables: Path) -> str:
+    # One number per model and source: mean over the 66 direct virtues (vices flipped) of the label-score difference vs DeepSeek.
+    lines = list(map(json.loads, tables.open()))
+    dims = lines[0]['_meta']['dimensions']
+    direct = [i for i, d in enumerate(dims) if d['family'] == 'virtues' and d['derived_from'] is None]
+    fav = np.array([-1 if dims[i]['kind'] == 'vices' else 1 for i in direct])
+    ds = 'deepseek/deepseek-v4.1-flash'
+    models = [m for m in lines[1]['models'] if m != ds]
+    table = []
+    for src, name in SOURCES.items():
+        vals, groups = [], []
+        for q in lines[1:]:
+            if q['source'] != src:
+                continue
+            opts = list(q['options'])
+            S = np.array([q['option_scores'][o] for o in opts], float)[:, direct]
+            if not np.isfinite(S).all():
+                continue
+            v = (S * fav).mean(1)
+            level = {m: [np.array([x['probabilities'][o] / 100 for o in opts]) @ v for x in q['models'][m]['draws']] for m in q['models']}
+            choice = {m: [v[opts.index(max(x['probabilities'], key=x['probabilities'].get))] for x in q['models'][m]['draws']] for m in q['models']}
+            entropy = {m: [-sum(p / 100 * np.log(p / 100) for p in x['probabilities'].values() if p > 0) / np.log(len(opts)) for x in q['models'][m]['draws']] for m in q['models']}
+            half = len(level[ds]) // 2
+            vals.append([np.mean(level[m]) - np.mean(level[ds]) for m in models] + [np.mean(level[ds][:half]) - np.mean(level[ds][half:])]
+                        + [np.mean(choice[m]) - np.mean(choice[ds]) for m in models] + [np.mean(choice[ds][:half]) - np.mean(choice[ds][half:])]
+                        + [np.mean(entropy[m]) for m in models] + [np.mean(entropy[ds])])
+            groups.append(q['eval_cluster'])
+        v = np.array(vals)[:, None, :]
+        b = bootstrap(v, groups, 2000)[:, 0, :]
+        k = len(models) + 1
+        ci = lambda j: f'{v[:, 0, j].mean():+.4f} ({np.quantile(b[:, j], .025):+.4f} to {np.quantile(b[:, j], .975):+.4f})'
+        for j, m in enumerate(models + ['DeepSeek self']):
+            table.append([name, short(m) if m != 'DeepSeek self' else m, ci(j), ci(k + j), f'{v[:, 0, 2 * k + j].mean():.2f}' if j < k - 1 else f'{v[:, 0, 3 * k - 1].mean():.2f} (DeepSeek)', len(vals)])
+    return tabulate(table, headers=['Source', 'Model', 'Probability-weighted virtue level vs DeepSeek (95%)', 'Chosen-option virtue level vs DeepSeek (95%)',
+                                    'Spread of stated % (0 = certain, 1 = even)', 'Questions'], tablefmt='html')
+
+
 def page_random(tables: Path, out: Path, title: str) -> Path:
     # Page for a hash-random question set: no selection roles, no calibration, main number = label-score difference vs DeepSeek.
     out.mkdir(parents=True, exist_ok=True)
@@ -372,8 +424,14 @@ def page_random(tables: Path, out: Path, title: str) -> Path:
               'Questions are hash-random from the eligible pool (500 everyday, 500 game summaries), read for eligibility first. Main number per label: each option\'s label score weighted by the model\'s average stated percentage, '
               'minus the same for DeepSeek, averaged over questions. Positive = the model puts more probability than DeepSeek on options with more of that label (for vices: more of the vice). '
               'This still mixes values with how decisive a model is.</p>',
+              '<h2>Overall: is each model more or less virtuous than DeepSeek?</h2>', overall_level(tables),
+              '<p>Overall virtue level = mean over the 66 directly judged virtues (vices flipped, so higher = more virtuous) of the probability-weighted virtue score of the options, minus DeepSeek\'s. '
+              'Scores run -1 to +1. The chosen-option column uses only each draw\'s top option, so it does not depend on how evenly a model spreads its percentages: '
+              'where the two columns disagree, decisiveness rather than choices drives the probability-weighted number. "DeepSeek self" (draw 1 minus draw 2) shows draw-to-draw noise. '
+              'Because the 66 labels mostly move together, these single numbers are more honest than counting virtues.</p>',
               '<h2>How many virtues differ from DeepSeek?</h2>', count_table,
-              '<p>"DeepSeek self" = DeepSeek draw 1 minus draw 2 (single draws, so noisier than the 2-draw model means). Intervals: game/topic cluster bootstrap over questions; draw noise not included; no correction for 66 comparisons.</p>',
+              '<p>"DeepSeek self" = DeepSeek draw 1 minus draw 2. Intervals: two-level bootstrap, resampling games/topics and then each model\'s draws within each question, so draw noise is included for the models; '
+              'no correction for 66 comparisons. With only 2 draws, each DeepSeek-self half is a single draw, so its interval cannot include within-half draw noise: its count is a pessimistic noise check.</p>',
               '<h2>Where each model differs most</h2>', img(top_differences(expected, out, 'expected', role)),
               '<h2>Virtue groups</h2>', img(spider(expected, out, 'expected', role)), img(spider(expected, out, 'expected', role, shape_only=True)),
               '<h2>D&D lawfulness and goodness</h2>', img(dnd_2d(expected, out, 'expected', role)),

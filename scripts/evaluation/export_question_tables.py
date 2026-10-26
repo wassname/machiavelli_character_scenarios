@@ -20,8 +20,11 @@ def export(run: Path) -> Path:
             k = (r['source_id'], r['model'], r['draw'])
             if best[k]['status'] != 'ok':
                 best[k] = r | {'redraw_of_invalid': True}
-    bad = [k for k, r in best.items() if r['status'] != 'ok']
+    # A provider content-policy block is a recorded refusal, not a score: that draw is dropped and listed; any other failure stops.
+    refused = sorted(k for k, r in best.items() if r['status'] == 'api_refusal' or (r['status'] == 'infrastructure_error' and 'PROHIBITED_CONTENT' in json.dumps(r.get('error'))))
+    bad = [k for k, r in best.items() if r['status'] != 'ok' and k not in refused]
     assert not bad, bad
+    best = {k: r for k, r in best.items() if k not in refused}
     scenes = {s['source_id']: s for s in map(json.loads, (run / 'scenes.jsonl').open())}
     dims = json.loads((ROOT / 'outputs/20261025_individual_dimensions/analysis.json').read_text())['dimensions']
     scores = {(r['source_id'], r['choice_id']): r['scores'] for r in pq.read_table(ROOT / 'outputs/20261025_individual_dimensions/action_scores.parquet').to_pylist() if r['source_id'] in scenes}
@@ -30,7 +33,7 @@ def export(run: Path) -> Path:
         by[sid][m].append({'draw': d, 'probabilities': r['original_probabilities'], 'reasoning': r['reasoning'], 'setup_note': r['setup_note']})
     out = run / 'question_tables.jsonl'
     with out.open('w') as f:
-        f.write(json.dumps({'_meta': {'author': 'PI/OpenAI', 'run': str(run), 'dimensions': dims}}) + '\n')
+        f.write(json.dumps({'_meta': {'author': 'PI/OpenAI', 'run': str(run), 'dimensions': dims, 'provider_refusals': [list(k) for k in refused]}}) + '\n')
         for sid, s in scenes.items():
             opts = list(s['choice_text'])
             models = {m: {'draws': sorted(v, key=lambda x: x['draw']),
