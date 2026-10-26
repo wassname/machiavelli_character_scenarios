@@ -5,6 +5,7 @@ from collections import defaultdict
 import hashlib
 from html import escape
 import json
+import re
 from pathlib import Path
 
 import matplotlib
@@ -429,6 +430,44 @@ def overall_level(tables: Path) -> str:
                                     'Spread of stated % (0 = certain, 1 = even)', 'Questions'], tablefmt='html')
 
 
+def calibrated_virtues(tables: Path, out: Path) -> tuple[Path, str]:
+    # Per-virtue raw vs split-half calibrated label-score difference vs DeepSeek, from calibration_heldout/virtue_rows.json.
+    rows = json.loads((tables.parent / 'calibration_heldout' / 'virtue_rows.json').read_text())['rows']
+    views = {'stated_raw': 'raw', 'crossfit_quantile': 'calibrated'}
+    models = sorted({short(r['model']) for r in rows}, key=list(COLORS).index)
+    ids = sorted({r['dimension']['id'] for r in rows})
+    # Row values are favourable-signed (virtue_rows applies favorable_multiplier): higher = more virtue, or less of a vice.
+    label = {r['dimension']['id']: re.sub(r'[^\x00-\u024f]', '', f"{r['dimension']['label']}{' (vice)' if r['dimension']['kind'] == 'vices' else ''} [{r['dimension']['tradition']}]").replace(', )', ')') for r in rows}
+    get = {(r['source'], short(r['model']), r['view'], r['dimension']['id']): r for r in rows if r['view'] in views}
+    order = sorted(ids, key=lambda i: np.mean([get[s, m, 'stated_raw', i]['mean_expected_label_difference'] for s in SOURCES for m in models]))
+    cols = [(v, m) for v in views for m in models]
+    clip = .06
+    fig, axs = plt.subplots(1, 2, figsize=(13, 17), constrained_layout=True)
+    counts = []
+    for ax, (src, name) in zip(axs, SOURCES.items()):
+        M = np.array([[get[src, m, v, i]['mean_expected_label_difference'] for v, m in cols] for i in order])
+        sig = np.array([[np.sign(get[src, m, v, i]['ci95'][0]) == np.sign(get[src, m, v, i]['ci95'][1]) for v, m in cols] for i in order])
+        im = ax.imshow(np.clip(M, -clip, clip), cmap='RdBu', vmin=-clip, vmax=clip, aspect='auto')
+        yy, xx = np.nonzero(sig)
+        ax.plot(xx, yy, 'k.', ms=3)
+        ax.axvline(len(models) - .5, color='k', lw=1.5)
+        ax.set_xticks(range(len(cols)), [m for v, m in cols], fontsize=8)
+        for k, v in enumerate(views.values()):
+            ax.text((k + .5) * len(models) - .5, -1.2, v, ha='center', fontsize=10)
+        ax.set_yticks(range(len(order)), [label[i] for i in order], fontsize=7)
+        ax.set_title(name, loc='left', pad=22)
+        for j, (v, m) in enumerate(cols):
+            ci = [get[src, m, v, i]['ci95'] for i in order]
+            counts.append([name, m, views[v], f'{sum(lo > 0 for lo, hi in ci)}/{len(ci)}', f'{sum(hi < 0 for lo, hi in ci)}/{len(ci)}'])
+    fig.colorbar(im, ax=axs, shrink=.25, label=f'Favourable label-score difference vs DeepSeek (clipped at \u00b1{clip})')
+    fig.suptitle('Per virtue vs DeepSeek, raw and split-half calibrated (blue = more virtuous, for vices = less of the vice; dot = 95% interval excludes 0)', fontsize=11)
+    path = out / 'virtues_random_calibrated.png'
+    fig.savefig(path, dpi=110)
+    plt.close(fig)
+    table = tabulate(counts, headers=['Source', 'Model', 'View', 'Interval above 0', 'Interval below 0'], tablefmt='html')
+    return path, table
+
+
 def page_random(tables: Path, out: Path, title: str) -> Path:
     # Page for a hash-random question set: no selection roles, no calibration, main number = label-score difference vs DeepSeek.
     out.mkdir(parents=True, exist_ok=True)
@@ -436,6 +475,7 @@ def page_random(tables: Path, out: Path, title: str) -> Path:
     role = 'random'
     figs = render(expected, None, out, 'expected', role)
     h, counts = heatmap(expected, out, 'expected', role)
+    cal_png, cal_counts = calibrated_virtues(tables, out)
     count_table = tabulate([[src, m, f'{pos}/{n}', f'{neg}/{n}'] for src, m, pos, neg, n in counts],
                            headers=['Source', 'Model', 'Virtues: interval above 0', 'Virtues: interval below 0'], tablefmt='html')
     img = lambda p: f'<img src="{p.name}" alt="{escape(p.stem)}">'
@@ -473,6 +513,11 @@ def page_random(tables: Path, out: Path, title: str) -> Path:
               '<h2>Virtue groups</h2>', img(spider(expected, out, 'expected', role)), img(spider(expected, out, 'expected', role, shape_only=True)),
               '<h2>D&D lawfulness and goodness</h2>', img(dnd_2d(expected, out, 'expected', role)),
               '<h2>All 66 virtues</h2>', img(h),
+              '<h2>All 66 virtues, raw vs calibrated (split-half)</h2>', img(cal_png), cal_counts,
+              '<p>Calibrated per-virtue values use the same split-half quantile map as the calibrated column above (geometric means of the two draws, 499 Gemini everyday questions); '
+              'intervals are two-level bootstraps that refit the map. Rows are sorted by the mean raw value over models and sources. Raw here is the arithmetic stated-percentage view from the same run. '
+              'Unlike the heatmap above, vices here are sign-flipped: blue always means more virtuous (less of a vice). '
+              'The labels still move together, so counts overstate independent evidence; compare the raw and calibrated halves of each panel rather than counting dots.</p>',
               '<details><summary>Virtues with intervals</summary>' + img(figs[0]) + '</details>',
               '<details open><summary>Behaviours, including violence</summary>' + img(figs[1]) + '</details>',
               '<h2>Example questions (hash-chosen, not typical or best)</h2>', ''.join(ex),
