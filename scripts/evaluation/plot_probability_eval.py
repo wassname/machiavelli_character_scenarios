@@ -373,6 +373,10 @@ def overall_level(tables: Path) -> str:
     fav = np.array([-1 if dims[i]['kind'] == 'vices' else 1 for i in direct])
     ds = 'deepseek/deepseek-v4.1-flash'
     models = [m for m in lines[1]['models'] if m != ds]
+    # Split-half quantile calibration (fit on one half of the questions, scored on the other); written by calibration_heldout/run.py.
+    cal = json.loads((tables.parent / 'calibration_heldout' / 'summary.json').read_text())
+    cal_level = {(r['source'], r['model']): r for r in cal['model_levels'] if r['view'] == 'crossfit_quantile'}
+    cal_self = {r['source']: r for r in cal['self_results'] if r['option_group'] == 'all'}
     table = []
     for src, name in SOURCES.items():
         vals, groups = [], []
@@ -411,9 +415,16 @@ def overall_level(tables: Path) -> str:
         v = point[:, None, :]
         k = len(models) + 1
         ci = lambda j: f'{v[:, 0, j].mean():+.4f} ({np.quantile(b[:, j], .025):+.4f} to {np.quantile(b[:, j], .975):+.4f})'
+        def cal_ci(m):
+            if m == 'DeepSeek self':
+                r = cal_self[src]
+                lo, hi = r['permutation_null_overall_interval95']['crossfit_quantile']
+                return f"{r['observed_overall_levels']['crossfit_quantile']:+.4f} (swap null {lo:+.4f} to {hi:+.4f})"
+            r = cal_level[src, m]
+            return f"{r['point']:+.4f} ({r['ci95'][0]:+.4f} to {r['ci95'][1]:+.4f})"
         for j, m in enumerate(models + ['DeepSeek self']):
-            table.append([name, short(m) if m != 'DeepSeek self' else m, ci(j), ci(k + j), f'{v[:, 0, 2 * k + j].mean():.2f}' if j < k - 1 else f'{v[:, 0, 3 * k - 1].mean():.2f} (DeepSeek)', len(vals)])
-    return tabulate(table, headers=['Source', 'Model', 'Probability-weighted virtue level vs DeepSeek (95%, games/topics then draws)', 'Chosen-option virtue level vs DeepSeek (95%)',
+            table.append([name, short(m) if m != 'DeepSeek self' else m, ci(j), cal_ci(m), ci(k + j), f'{v[:, 0, 2 * k + j].mean():.2f}' if j < k - 1 else f'{v[:, 0, 3 * k - 1].mean():.2f} (DeepSeek)', len(vals)])
+    return tabulate(table, headers=['Source', 'Model', 'Probability-weighted virtue level vs DeepSeek (95%, games/topics then draws)', 'Calibrated, split-half (95%)', 'Chosen-option virtue level vs DeepSeek (95%)',
                                     'Spread of stated % (0 = certain, 1 = even)', 'Questions'], tablefmt='html')
 
 
@@ -445,7 +456,12 @@ def page_random(tables: Path, out: Path, title: str) -> Path:
               'Scores run -1 to +1. The chosen-option column uses only each draw\'s top option, so it does not depend on how evenly a model spreads its percentages: '
               'where the two columns disagree, the gap is consistent with differences in how evenly the percentages are spread (and in how lower-ranked options are weighted), not proof of it. '
               '"DeepSeek self" (draw 1 minus draw 2) shows draw-to-draw noise; it is a descriptive reference, not an equivalence test. '
-              'Because the 66 labels mostly move together, these single numbers are more honest than counting virtues.</p>',
+              'Because the 66 labels mostly move together, these single numbers are more honest than counting virtues. '
+              'The calibrated column maps each model\'s stated percentages onto DeepSeek\'s confidence scale (quantile matching of pairwise log-odds, p05-p95), '
+              'fitted on one random half of the questions and applied to the other half, then swapped, so no question is scored with a map fitted on it. '
+              'It uses smoothed geometric means of the two draws, so it differs slightly from the raw column even without calibration. '
+              'Its DeepSeek-self check is draw 1 vs draw 2 after calibration, with an interval from swapping draw labels and refitting. '
+              'Calibration keeps each model\'s option order, so it cannot remove a difference in which option a model ranks first (e.g. Qwen on games).</p>',
               '<h2>How many virtues differ from DeepSeek?</h2>', count_table,
               '<p>"DeepSeek self" = DeepSeek draw 1 minus draw 2. Intervals: two-level bootstrap, resampling games/topics and then each model\'s draws within each question, so draw noise is included for the models; '
               'no correction for 66 comparisons. With only 2 draws, each DeepSeek-self half is a single draw, so its interval cannot include within-half draw noise: its count is a pessimistic noise check.</p>',
