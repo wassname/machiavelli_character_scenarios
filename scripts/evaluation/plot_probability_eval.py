@@ -446,16 +446,17 @@ def calibrated_virtues(tables: Path, out: Path) -> tuple[Path, str]:
     counts = []
     for ax, (src, name) in zip(axs, SOURCES.items()):
         M = np.array([[get[src, m, v, i]['mean_expected_label_difference'] for v, m in cols] for i in order])
-        sig = np.array([[np.sign(get[src, m, v, i]['ci95'][0]) == np.sign(get[src, m, v, i]['ci95'][1]) for v, m in cols] for i in order])
+        sig = np.array([[get[src, m, v, i]['ci95'][0] > 0 or get[src, m, v, i]['ci95'][1] < 0 for v, m in cols] for i in order])
         im = ax.imshow(np.clip(M, -clip, clip), cmap='RdBu', vmin=-clip, vmax=clip, aspect='auto')
         yy, xx = np.nonzero(sig)
         ax.plot(xx, yy, 'k.', ms=3)
         ax.axvline(len(models) - .5, color='k', lw=1.5)
         ax.set_xticks(range(len(cols)), [m for v, m in cols], fontsize=8)
+        ax.tick_params(axis='x', top=True, labeltop=True)
         for k, v in enumerate(views.values()):
-            ax.text((k + .5) * len(models) - .5, -1.2, v, ha='center', fontsize=10)
+            ax.text((k + .5) * len(models) - .5, -2.2, v, ha='center', fontsize=10)
         ax.set_yticks(range(len(order)), [label[i] for i in order], fontsize=7)
-        ax.set_title(name, loc='left', pad=22)
+        ax.set_title(name, loc='left', pad=50)
         for j, (v, m) in enumerate(cols):
             ci = [get[src, m, v, i]['ci95'] for i in order]
             counts.append([name, m, views[v], f'{sum(lo > 0 for lo, hi in ci)}/{len(ci)}', f'{sum(hi < 0 for lo, hi in ci)}/{len(ci)}'])
@@ -513,11 +514,13 @@ def page_random(tables: Path, out: Path, title: str) -> Path:
               '<h2>Virtue groups</h2>', img(spider(expected, out, 'expected', role)), img(spider(expected, out, 'expected', role, shape_only=True)),
               '<h2>D&D lawfulness and goodness</h2>', img(dnd_2d(expected, out, 'expected', role)),
               '<h2>All 66 virtues</h2>', img(h),
-              '<h2>All 66 virtues, raw vs calibrated (split-half)</h2>', img(cal_png), cal_counts,
-              '<p>Calibrated per-virtue values use the same split-half quantile map as the calibrated column above (geometric means of the two draws, 499 Gemini everyday questions); '
-              'intervals are two-level bootstraps that refit the map. Rows are sorted by the mean raw value over models and sources. Raw here is the arithmetic stated-percentage view from the same run. '
-              'Unlike the heatmap above, vices here are sign-flipped: blue always means more virtuous (less of a vice). '
+              '<h2>All 66 virtues, raw vs calibrated (split-half)</h2>',
+              '<p>Unlike the heatmap above, vices here are sign-flipped: blue always means more virtuous (less of a vice). '
+              'Calibrated per-virtue values use the same split-half quantile map as the calibrated column above (geometric means of the two draws); '
+              'intervals are two-level bootstraps that refit the map. Raw here is the arithmetic stated-percentage view on the same questions, so both halves use 499 Gemini everyday questions (500 elsewhere). '
+              'Rows are sorted by the mean raw value over models and sources. '
               'The labels still move together, so counts overstate independent evidence; compare the raw and calibrated halves of each panel rather than counting dots.</p>',
+              img(cal_png), cal_counts,
               '<details><summary>Virtues with intervals</summary>' + img(figs[0]) + '</details>',
               '<details open><summary>Behaviours, including violence</summary>' + img(figs[1]) + '</details>',
               '<h2>Example questions (hash-chosen, not typical or best)</h2>', ''.join(ex),
