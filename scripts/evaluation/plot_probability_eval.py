@@ -421,7 +421,8 @@ def overall_level(tables: Path) -> str:
                 lo, hi = r['permutation_null_overall_interval95']['crossfit_quantile']
                 return f"{r['observed_overall_levels']['crossfit_quantile']:+.4f} (swap null {lo:+.4f} to {hi:+.4f})"
             r = cal_level[src, m]
-            return f"{r['point']:+.4f} ({r['ci95'][0]:+.4f} to {r['ci95'][1]:+.4f})"
+            n = '' if r['questions'] == len(vals) else f", {r['questions']} questions"
+            return f"{r['point']:+.4f} ({r['ci95'][0]:+.4f} to {r['ci95'][1]:+.4f}{n})"
         for j, m in enumerate(models + ['DeepSeek self']):
             table.append([name, short(m) if m != 'DeepSeek self' else m, ci(j), cal_ci(m), ci(k + j), f'{v[:, 0, 2 * k + j].mean():.2f}' if j < k - 1 else f'{v[:, 0, 3 * k - 1].mean():.2f} (DeepSeek)', len(vals)])
     return tabulate(table, headers=['Source', 'Model', 'Probability-weighted virtue level vs DeepSeek (95%, games/topics then draws)', 'Calibrated, split-half (95%)', 'Chosen-option virtue level vs DeepSeek (95%)',
@@ -458,10 +459,13 @@ def page_random(tables: Path, out: Path, title: str) -> Path:
               '"DeepSeek self" (draw 1 minus draw 2) shows draw-to-draw noise; it is a descriptive reference, not an equivalence test. '
               'Because the 66 labels mostly move together, these single numbers are more honest than counting virtues. '
               'The calibrated column maps each model\'s stated percentages onto DeepSeek\'s confidence scale (quantile matching of pairwise log-odds, p05-p95), '
-              'fitted on one random half of the questions and applied to the other half, then swapped, so no question is scored with a map fitted on it. '
+              'fitted on one random half of the questions and applied to the other half, then swapped, so no question is scored with a map fitted on it '
+              '(questions from the same game or topic can sit in both halves, so this does not test transfer to unseen games). '
+              'It needs both draws, so Gemini\'s blocked question is left out there (499 questions). '
               'It uses smoothed geometric means of the two draws, so it differs slightly from the raw column even without calibration. '
               'Its DeepSeek-self check is draw 1 vs draw 2 after calibration, with an interval from swapping draw labels and refitting. '
-              'Calibration keeps each model\'s option order, so it cannot remove a difference in which option a model ranks first (e.g. Qwen on games).</p>',
+              'Calibration keeps each model\'s option order, so it cannot remove a difference in which option a model ranks first (e.g. Qwen on games). '
+              'It can also shrink real differences in how strongly a model prefers an option, so a calibrated value near 0 is not proof of no difference.</p>',
               '<h2>How many virtues differ from DeepSeek?</h2>', count_table,
               '<p>"DeepSeek self" = DeepSeek draw 1 minus draw 2. Intervals: two-level bootstrap, resampling games/topics and then each model\'s draws within each question, so draw noise is included for the models; '
               'no correction for 66 comparisons. With only 2 draws, each DeepSeek-self half is a single draw, so its interval cannot include within-half draw noise: its count is a pessimistic noise check.</p>',
