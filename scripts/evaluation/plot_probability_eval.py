@@ -124,6 +124,36 @@ def heatmap(scores: Path, out: Path, mode: str, role: str) -> tuple[Path, list[l
     return path, counts
 
 
+def top_differences(scores: Path, out: Path, mode: str, role: str, k: int = 6) -> Path:
+    # Readable summary: per model and source, the k virtues most above and most below DeepSeek (by estimate / bootstrap SE).
+    rows = [r for r in json.loads(scores.read_text())['rows'] if r['mode'] == mode and r['role'] == role
+            and r['dimension']['family'] == 'virtues' and r['dimension'].get('derived_from') is None and r['beta_nats_per_label_unit'] is not None]
+    models = [m for m in COLORS if m != 'DeepSeek self' and any(short(r['model']) == m for r in rows)]
+    fig, axs = plt.subplots(len(models), 2, figsize=(13, 3.1 * len(models)), constrained_layout=True)
+    for i, m in enumerate(models):
+        for j, (src, name) in enumerate(SOURCES.items()):
+            ax = axs[i, j]
+            sub = sorted((r for r in rows if short(r['model']) == m and r['source'] == src), key=lambda r: r['beta_nats_per_label_unit'] / r['bootstrap_se'])
+            pick = sub[:k] + sub[-k:]
+            y = np.arange(len(pick))
+            vals = np.array([r['beta_nats_per_label_unit'] for r in pick])
+            lo, hi = np.array([r['ci95'][0] for r in pick]), np.array([r['ci95'][1] for r in pick])
+            sig = (lo > 0) | (hi < 0)
+            ax.barh(y, vals, color=[COLORS[m] if s else '#cccccc' for s in sig], height=.6)
+            ax.errorbar(vals, y, xerr=[vals - lo, hi - vals], fmt='none', ecolor='#444444', lw=.8, capsize=2)
+            ax.axvline(0, color='#555555', lw=.8)
+            ax.set_yticks(y, [f"{r['dimension']['label']} [{r['dimension'].get('tradition', '')}]" + (' \u2022 vice' if r['dimension']['kind'] == 'vices' else '') for r in pick], fontsize=8)
+            ax.axhline(k - .5, color='#bbbbbb', lw=.6, ls='--')
+            ax.set_title(f'{m} \u00b7 {name}', fontsize=10, loc='left', color=COLORS[m])
+            ax.tick_params(axis='x', labelsize=8)
+    fig.suptitle(f'Where each model differs most from DeepSeek ({role} questions, {mode}): bottom {k} and top {k} of 66 virtues\n'
+                 'Bar = nats per unit of virtue score, model minus DeepSeek; grey bar = 95% interval includes 0. DeepSeek vs itself gives about 5 of 66 below 0 by noise alone.', fontsize=11)
+    path = out / f'top_differences_{role}_{mode}.png'
+    fig.savefig(path, dpi=120, bbox_inches='tight')
+    plt.close(fig)
+    return path
+
+
 def examples(question_tables: Path, k: int = 6) -> str:
     qs = [q for q in map(json.loads, question_tables.open()) if '_meta' not in q and q['role'] == 'dev']
     qs.sort(key=lambda q: hashlib.sha256(('example:' + q['source_id']).encode()).hexdigest())
@@ -175,7 +205,8 @@ def page(scoring: Path, out: Path) -> Path:
               '<h2>Did choosing uncertain questions help?</h2>', noise_table,
               '<p>Variance of the four models\' mean log-probabilities divided by their draw-to-draw variance, pooled over questions. Dev is not higher than control, so choosing '
               'DeepSeek-uncertain questions did not separate the models better than random questions.</p>',
-              '<h2>Virtues at a glance (dev, raw)</h2>', img(figs['raw', 'dev'][0]),
+              '<h2>Where each model differs most (dev, raw)</h2>', img(top_differences(scoring / 'scored_identity.json', out, 'raw', 'dev')),
+              '<h2>All 66 virtues (dev, raw)</h2>', img(figs['raw', 'dev'][0]),
               '<details open><summary>Virtues with intervals (dev, raw)</summary>' + img(figs['raw', 'dev'][1]) + '</details>',
               '<details open><summary>Behaviours, including violence (dev, raw)</summary>' + img(figs['raw', 'dev'][2]) + '</details>',
               '<details open><summary>D&D lawfulness ("order") and goodness ("morality") (dev, raw)</summary>' + img(figs['raw', 'dev'][3]) + '</details>',
