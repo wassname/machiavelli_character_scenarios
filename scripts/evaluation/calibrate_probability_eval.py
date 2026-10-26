@@ -650,6 +650,123 @@ def plot_maps(result: dict, out: Path) -> Path:
     return path
 
 
+def median_temperature_map(model: dict, reference: dict, ids: list[str]) -> dict:
+    quantiles = quantile_map(model, reference, ids)
+    x, y = quantiles['model_quantiles'][2], quantiles['reference_quantiles'][2]
+    assert x > 0 and y > 0, 'Median log-odds temperature unidentified at zero median'
+    slope = y / x
+    upper = max(p['x'] for p in quantiles['points'])
+    return quantiles | {'kind': 'median_temperature', 'x': [0., upper], 'y': [0., slope * upper],
+                        'end_slope': slope, 'slope': slope, 'strict_identity_fraction': 0.,
+                        'identity_shrinkage': 0., 'extrapolation': 'same_scalar_everywhere',
+                        'note': 'One positive scalar: weighted median reference |pair log-odds| / weighted median model |pair log-odds| on the same set. Equal total question weight. Same slope everywhere; no additional tail offset.'}
+
+
+def per_set_experiment(args: argparse.Namespace) -> None:
+    start = time.monotonic()
+    args.out.mkdir(parents=True, exist_ok=True)
+    logger.remove()
+    logger.add(sys.stdout, format='{message}', level='INFO')
+    logger.add(args.out / 'run.md', format='{message}', level='DEBUG', mode='w')
+    logger.info('# Per-set confidence calibration\n\nAuthor: PI/OpenAI\n\n```json\n' + json.dumps({k: str(v) for k,v in vars(args).items()}, indent=2) + '\n```\n')
+    logger.info('SHOULD: raw slopes reproduce the existing scorer because probabilities, draw pooling, labels and question sets are unchanged. Every calibration preserves option ranks.\n\nTODO validate: matching confidence on the same set keeps DeepSeek self near zero and makes Qwen controls less one-sided without increasing self-noise. Label interval counts are correlated; no numerical cutoff for "few dots" has been specified.\n')
+    checks = synthetic_check()
+    scenes = {r['source_id']: r for r in map(json.loads, args.scenes.open())}
+    metadata = json.loads((args.labels.parent / 'analysis.json').read_text())
+    canonical_path = Path(metadata['inputs']['run']) / 'scenes.jsonl'
+    assert sha(canonical_path) == metadata['input_sha256']['scenes']
+    canonical = {r['source_id']: r for r in map(json.loads, canonical_path.open())}
+    assert all(all(s[k] == canonical[sid][k] for k in ('text','choice_text','source','eval_cluster')) for sid,s in scenes.items())
+    dimensions = metadata['dimensions']
+    values = {(r['source_id'],r['choice_id']): r['scores'] for r in pq.read_table(args.labels).to_pylist()}
+    scores = {sid: np.array([values[sid,o] for o in s['choice_text']]) for sid,s in scenes.items()}
+    reference_rows, reference_status = read_rows(args.reference, args.reference_level, REFERENCE)
+    comparison_rows, comparison_status = read_rows(args.comparisons, args.level)
+    pooled, missing = pooled_logs(comparison_rows, scenes, args.draws)
+    pooled_ref, missing_ref = pooled_logs(reference_rows, scenes, args.reference_draws)
+    assert not missing and not missing_ref, 'Incomplete main comparison draws'
+    reference = {sid: x for (_,sid),x in pooled_ref.items()}
+    models = sorted({m for m,_ in pooled} - {REFERENCE})
+    main_logs = {m: {sid:x for (model,sid),x in pooled.items() if model==m} for m in models}
+    control_rows, control_status = read_rows(args.control_reference, args.control_level, REFERENCE)
+    self_logs = []
+    assert not set(args.control_draws_a) & set(args.control_draws_b)
+    for draws in (args.control_draws_a,args.control_draws_b):
+        remap = {d:i for i,d in enumerate(draws)}
+        p, incomplete = pooled_logs([r | {'draw':remap[r['draw']]} for r in control_rows if r['draw'] in remap], scenes, len(draws))
+        assert not incomplete, 'Incomplete self-control draws'
+        self_logs.append({sid:x for (_,sid),x in p.items()})
+    selection = read_selection(args.selection, args.extreme_role, args.exclude_ids)
+    selected_ids = {q['source_id'] for q in selection['questions']}
+    assert selected_ids <= set(reference) and all(selected_ids <= set(main_logs[m]) for m in models)
+    assert all(selected_ids <= set(p) for p in self_logs)
+    models += ['DeepSeek self']
+    model_pairs = [(m,main_logs[m],reference) for m in models[:-1]] + [('DeepSeek self',self_logs[0],self_logs[1])]
+    rows, counts, gates, maps, question_rows = [], [], [], {}, []
+    factory = quantile_map if args.per_set_calibration == 'quantile' else median_temperature_map
+    for source in sorted({scenes[s]['source'] for s in selected_ids}):
+        roles = {role: sorted(q['source_id'] for q in selection['questions'] if q['source']==source and q['role']==role) for role in ('dev','control','extreme')}
+        maps[source] = {}
+        for role in ('dev','control'):
+            ids = roles[role]
+            fit_ids = ids + roles['extreme'] if role == 'dev' else ids
+            assert ids and fit_ids and not set(roles['dev']) & set(roles['control'])
+            maps[source][role] = {}
+            nats = {}
+            for model, model_logp, baseline in model_pairs:
+                mapping = factory(model_logp,baseline,fit_ids)
+                maps[source][role][model] = mapping
+                if args.per_set_calibration == 'median':
+                    reverse = median_temperature_map(baseline,model_logp,fit_ids)
+                    assert abs(mapping['slope'] * reverse['slope'] - 1) < 1e-12
+                for sid in ids:
+                    raw = normalize(model_logp[sid]) - normalize(baseline[sid])
+                    calibrated, outside = apply_map(model_logp[sid],mapping)
+                    delta = calibrated - normalize(baseline[sid])
+                    nats[model,'raw',sid],nats[model,'calibrated',sid] = raw,delta
+                    question_rows.append({'source':source,'role':role,'source_id':sid,'model':model,
+                                          'raw_nats':raw.tolist(),'calibrated_nats':delta.tolist(),
+                                          'above_fit_pairs':outside,'pairs':len(raw)*(len(raw)-1)//2})
+            fitted, coverage = score_labels(ids,nats,models,scores,dimensions,scenes,args.replicates,args.all_virtues)
+            for r in fitted:
+                rows.append(r | {'source':source,'role':role,'map_kind':'identity' if r['mode']=='raw' else args.per_set_calibration,
+                                 'derived':r['dimension']['derived_from'] is not None,'noise_floor':r['model']=='DeepSeek self'})
+            for mode in ('raw','calibrated'):
+                for model in models:
+                    direct = [r for r in fitted if r['mode']==mode and r['model']==model and r['family']=='virtues' and r['dimension']['derived_from'] is None]
+                    assert len(direct)==66 and all(r['ci95'] is not None for r in direct)
+                    counts.append({'source':source,'role':role,'mode':mode,'model':model,'virtues':66,
+                                   'above_zero':sum(r['ci95'][0]>0 for r in direct),'below_zero':sum(r['ci95'][1]<0 for r in direct),
+                                   'mean_named_trait_beta':float(np.mean([r['beta_nats_per_label_unit'] for r in direct])),
+                                   'mean_favorable_beta':float(np.mean([r['beta_nats_per_label_unit']*(-1 if r['dimension']['kind']=='vices' else 1) for r in direct]))})
+            raw = np.array([np.mean(np.abs(nats['DeepSeek self','raw',sid])) for sid in ids])
+            calibrated = np.array([np.mean(np.abs(nats['DeepSeek self','calibrated',sid])) for sid in ids])
+            groups = [scenes[sid]['eval_cluster'] for sid in ids]
+            interval = np.quantile(bootstrap((calibrated-raw)[:,None,None],groups,args.replicates)[:,0,0],[.025,.975])
+            gates.append({'source':source,'role':role,'questions':len(ids),'fit_questions':len(fit_ids),
+                          'raw_mean_abs_nats':float(raw.mean()),'calibrated_mean_abs_nats':float(calibrated.mean()),
+                          'change':float((calibrated-raw).mean()),'ci95':interval.tolist(),
+                          'does_not_increase_point_self_noise':bool((calibrated-raw).mean()<=1e-12)})
+    paths = args.reference + args.comparisons + args.control_reference + [args.scenes,args.labels,args.labels.parent/'analysis.json',canonical_path,args.selection,Path(__file__),ROOT/'uv.lock'] + ([args.exclude_ids] if args.exclude_ids else [])
+    summary = {'author':'PI/OpenAI','method':args.per_set_calibration,'fit_policy':f'Dev map fits dev+extremes; control map fits those same controls only. Main models use{args.draws}draws versus{args.reference_draws}draw DeepSeek; self-control uses separate groups{args.control_draws_a}vs{args.control_draws_b}. Confidence fitting is transductive and ignores labels.',
+               'status':{'reference':reference_status,'comparison':comparison_status,'control':control_status},
+               'counts':counts,'self_noise':gates,'self_noise_gate_all_sets':all(g['does_not_increase_point_self_noise'] for g in gates),
+               'few_dots_threshold':None,'input_sha256':{str(p):sha(p) for p in paths},'checks':checks,
+               'limitations':['Matching confidence can remove genuine overall preference strength; fewer one-sided Qwen labels is not independent validation.',
+                              'Intervals fix the fitted transductive maps and replies. Confidence-map estimation, label error and fresh generations are omitted.',
+                              'The66direct labels are correlated. Above/below counts are not independent tests; no exact maximum number of self dots was specified.',
+                              'Mean named-trait slope follows source polarity; favorable mean reverses the three direct named vices. Larger-label-variance menus weigh more in each slope.',
+                              'Controls are used for fitting and comparing methods, not independent validation. Different per-set maps give different probability rescalings; lower one-sided counts do not prove values were isolated.']}
+    (args.out/'summary.json').write_text(json.dumps(summary,indent=2,allow_nan=False)+'\n')
+    (args.out/'maps.json').write_text(json.dumps(maps,indent=2,allow_nan=False)+'\n')
+    for mode,name in (('raw','scored_identity.json'),('calibrated','scored_per_set_'+args.per_set_calibration+'.json')):
+        (args.out/name).write_text(json.dumps({'author':'PI/OpenAI','rows':[r for r in rows if r['mode']==mode],'dimensions':dimensions,'method':summary['fit_policy']},indent=2,allow_nan=False)+'\n')
+    (args.out/'question_contrasts.jsonl').write_text(''.join(json.dumps(q)+'\n' for q in question_rows))
+    logger.info('## Self-noise checks\n\n'+tabulate([[g['source'],g['role'],g['change'],g['ci95'],g['does_not_increase_point_self_noise']] for g in gates],headers=['Source','Set','Change in abs nats↓','95% interval','No point increase'],tablefmt='pipe',floatfmt='.4f')+'\n')
+    logger.info('## Direct-virtue intervals\n\nAbove/below are named-trait95% intervals excluding zero;66direct labels, fixed fitted maps.\n\n'+tabulate([[r['source'],r['role'],r['model'].split('/')[-1],r['mode'],r['above_zero'],r['below_zero'],r['mean_named_trait_beta'],r['mean_favorable_beta']] for r in counts],headers=['Source','Set','Model','Mode','Above','Below','Mean named slope','Mean favorable slope'],tablefmt='pipe',floatfmt='.3f')+'\n\n'+'\n'.join('- '+s for s in summary['limitations']))
+    logger.info(f'\nRuntime {time.monotonic()-start:.1f}s; API calls0.\n\n{args.out / "run.md"}')
+
+
 def main(args: argparse.Namespace) -> None:
     start = time.monotonic()
     args.out.mkdir(parents=True, exist_ok=True)
@@ -878,6 +995,7 @@ if __name__ == "__main__":
     parser.add_argument("--draws", type=int, default=4)
     parser.add_argument("--landmarks", type=int, default=100)
     parser.add_argument("--replicates", type=int, default=1000)
+    parser.add_argument('--per-set-calibration', choices=('quantile','median'), help='Run the isolated per-set calibration experiment instead of the main scorer')
     parser.add_argument('--all-virtues', action='store_true', help='Include all80virtues and preserve derived_from metadata')
     parser.add_argument('--identity-primary', action='store_true', help='Keep raw identity primary regardless of the exploratory quantile gate')
     parser.add_argument("--selection", type=Path)
@@ -888,7 +1006,7 @@ if __name__ == "__main__":
     parser.add_argument("--out", type=Path, default=ROOT / "outputs/20261026_calibration_sketch")
     arguments = parser.parse_args()
     try:
-        main(arguments)
+        per_set_experiment(arguments) if arguments.per_set_calibration else main(arguments)
     except Exception:
         logger.error("## FAILED\n\n```\n" + traceback.format_exc() + "```\n")
         raise
