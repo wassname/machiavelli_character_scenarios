@@ -89,37 +89,109 @@ def render(scores: Path, scenes_path: Path, out: Path, mode: str, role: str) -> 
     return made
 
 
-def examples(question_tables: Path, scenes_path: Path, k: int = 6) -> str:
-    scenes = {s['source_id']: s for s in map(json.loads, scenes_path.open())}
-    by = defaultdict(dict)
-    for line in question_tables.open():
-        q = json.loads(line)
-        if '_meta' in q or q.get('map_kind') not in (None, 'identity'):
-            continue
-        by[q['source_id']][short(q['model'])] = q
-    ids = sorted((s for s in by if s in scenes and scenes[s].get('eval_role') == 'dev'), key=lambda s: hashlib.sha256(('example:' + s).encode()).hexdigest())
+def heatmap(scores: Path, out: Path, mode: str, role: str) -> tuple[Path, list[list]]:
+    # Compact view: one cell per (virtue, model); colour = nats per label unit; dot = 95% interval excludes 0.
+    rows = [r for r in json.loads(scores.read_text())['rows'] if r['mode'] == mode and r['role'] == role
+            and r['dimension']['family'] == 'virtues' and r['dimension'].get('derived_from') is None]
+    dims = list({r['dimension']['id']: r['dimension'] for r in rows}.values())
+    models = [m for m in COLORS if any(short(r['model']) == m for r in rows)]
+    fig, axs = plt.subplots(1, 2, figsize=(9, 17), sharey=True, constrained_layout=True)
+    counts = []
+    for ax, (src, name) in zip(axs, SOURCES.items(), strict=True):
+        grid = np.full((len(dims), len(models)), np.nan)
+        sig = np.zeros_like(grid, dtype=bool)
+        for r in rows:
+            if r['source'] == src and r['beta_nats_per_label_unit'] is not None:
+                i, j = [d['id'] for d in dims].index(r['dimension']['id']), models.index(short(r['model']))
+                grid[i, j] = r['beta_nats_per_label_unit']
+                lo, hi = r['ci95']
+                sig[i, j] = lo > 0 or hi < 0
+        im = ax.imshow(np.clip(grid, -.6, .6), cmap='RdBu', vmin=-.6, vmax=.6, aspect='auto')
+        yy, xx = np.nonzero(sig)
+        ax.plot(xx, yy, 'k.', ms=3)
+        ax.set_xticks(range(len(models)), models, rotation=45, ha='right')
+        ax.set_title(name)
+        for j, m in enumerate(models):
+            pos, neg = int(((grid[:, j] > 0) & sig[:, j]).sum()), int(((grid[:, j] < 0) & sig[:, j]).sum())
+            counts.append([name, m, pos, neg, int(np.isfinite(grid[:, j]).sum())])
+    axs[0].set_yticks(range(len(dims)), [f"{d['label']} [{d.get('tradition', '')}]" + (' \u2022 vice' if d['kind'] == 'vices' else '') for d in dims], fontsize=7)
+    fig.colorbar(im, ax=axs, shrink=.3, label='Nats per label unit vs DeepSeek (clipped at \u00b10.6)')
+    fig.suptitle(f'66 virtues, {role} questions ({mode}): blue = model favours options higher on the virtue more than DeepSeek does', fontsize=10)
+    fig.supxlabel('Dot = 95% game/topic bootstrap interval excludes 0. "DeepSeek self" (draws 0-1 vs 2-3) shows how many dots noise alone gives.', fontsize=8)
+    path = out / f'heatmap_virtues_{role}_{mode}.png'
+    fig.savefig(path, dpi=130, bbox_inches='tight')
+    plt.close(fig)
+    return path, counts
+
+
+def examples(question_tables: Path, k: int = 6) -> str:
+    qs = [q for q in map(json.loads, question_tables.open()) if '_meta' not in q and q['role'] == 'dev']
+    qs.sort(key=lambda q: hashlib.sha256(('example:' + q['source_id']).encode()).hexdigest())
     blocks = []
-    for sid in [s for src in SOURCES for s in [x for x in ids if scenes[x]['source'] == src][:k // 2]]:
-        s, qs = scenes[sid], by[sid]
-        any_q = next(iter(qs.values()))
-        opts = any_q['option_ids']
-        table = [[o, escape(s['choice_text'][o][:90]), f"{100 * np.exp(any_q['baseline_logp'][i]):.0f}%"]
-                 + [f"{100 * np.exp(qs[m]['raw_logp'][i]):.0f}% ({qs[m]['raw_nats'][i]:+.2f})" if m in qs else '' for m in COLORS if m != 'DeepSeek self']
-                 for i, o in enumerate(opts)]
-        blocks.append(f'<h4>{escape(sid)}</h4><p>{escape(s.get("decision_context", "")[-600:])}</p>'
-                      + tabulate(table, headers=['id', 'option', 'DeepSeek'] + [m + ' (nats)' for m in COLORS if m != 'DeepSeek self'], tablefmt='html'))
-    return ('<h2>Example questions</h2><p>Hash-chosen dev questions, not typical or best. Percent = geometric mean of the 4 stated draws (add-one smoothed, renormalised); nats vs DeepSeek in brackets.</p>'
-            + ''.join(blocks))
+    for q in [q for src in SOURCES for q in [x for x in qs if x['source'] == src][:k // 2]]:
+        models = q['models']
+        names = {m: short(m) for m in models}
+        table = [[o, escape(t[:90])] + [f"{models[m]['mean_stated_percent'][o]:.0f}%" + ('' if 'deepseek' in m else f" ({models[m]['calibrated_nats'][o]:+.2f})")
+                                        for m in models] for o, t in q['options'].items()]
+        heads = ['id', 'option'] + [('DeepSeek' if 'deepseek' in m else names[m]) + ('' if 'deepseek' in m else ' (nats)') for m in models]
+        replies = ''.join(f"<details><summary>{escape('DeepSeek' if 'deepseek' in m else names[m])}: one native reply</summary><pre>{escape(v['native_example']['reply'])}</pre></details>"
+                          for m, v in models.items() if v.get('native_example'))
+        blocks.append(f"<h4>{escape(q['source_id'])}</h4><pre>{escape(q['text'][-900:])}</pre>" + tabulate(table, headers=heads, tablefmt='html') + replies)
+    return ('<h2>Example questions</h2><p>Hash-chosen dev questions, not typical or best. Percent = mean of the 4 stated draws; '
+            'calibrated nats vs DeepSeek in brackets.</p>' + ''.join(blocks))
+
+
+def page(scoring: Path, out: Path) -> Path:
+    out.mkdir(parents=True, exist_ok=True)
+    summary = json.loads((scoring / 'summary.json').read_text())
+    noise = json.loads((scoring / 'draw_noise.json').read_text())['summaries']
+    figs, counts = {}, {}
+    for mode, file in (('calibrated', 'scored_quantile.json'), ('raw', 'scored_identity.json')):
+        for role in ('dev', 'control'):
+            figs[mode, role] = render(scoring / file, None, out, mode, role)
+            h, c = heatmap(scoring / file, out, mode, role)
+            figs[mode, role].insert(0, h)
+            counts[mode, role] = c
+    count_table = tabulate([[src, m, f'{pos}/{n}', f'{neg}/{n}'] for src, m, pos, neg, n in counts['calibrated', 'dev']],
+                           headers=['Source', 'Model', 'Virtues: interval above 0', 'Virtues: interval below 0'], tablefmt='html')
+    noise_rows = [[SOURCES[r['source']], r['role'], r['questions'], f"{r['pooled_between_over_draw_noise']:.1f}", f"{r['ci95'][0]:.1f} to {r['ci95'][1]:.1f}"]
+                  for r in noise if r['model_group'] == 'comparisons_only' and r['role'] in ('dev', 'control')]
+    noise_table = tabulate(noise_rows, headers=['Source', 'Questions', 'n', 'Between-model / draw-noise variance', '95% interval'], tablefmt='html')
+    gate = summary['quantile_clean_dev_gate']
+    img = lambda p: f'<img src="{p.name}" alt="{escape(p.stem)}">'
+    blocks = ['<h1>Which virtues does each model favour, compared with DeepSeek?</h1>',
+              '<p>Five models stated a percentage for every option of 505 moral-choice questions, 4 draws each with rotated option order and reasoning (10k-token budget). '
+              'For each question and option, nats = log(model %) minus log(DeepSeek %), so the question\'s base rate cancels. Per virtue, the number shown is how many nats more '
+              '(or fewer) a model puts on options that score one unit higher on that virtue, compared with DeepSeek. Everyday dilemmas and game summaries are kept separate.</p>',
+              '<p>Questions were chosen with DeepSeek only: its most uncertain 10% (dev) and random controls. Main views are calibrated: each model\'s confidence scale is '
+              'matched to DeepSeek\'s by quantiles (5th to 95th percentile), because models differ in how extreme their percentages are. Calibration passed the check that '
+              f'it does not add noise when DeepSeek is compared with itself, in both sources ({escape(json.dumps(gate["per_source"]))}). Uncalibrated views are below.</p>',
+              '<h2>How many virtues differ from DeepSeek? (dev questions, calibrated)</h2>', count_table,
+              '<p>"DeepSeek self" compares DeepSeek\'s draws 1-2 with draws 3-4: its count is roughly what noise alone produces.</p>',
+              '<h2>Did choosing uncertain questions help?</h2>', noise_table,
+              '<p>Variance of the four models\' mean log-probabilities divided by their draw-to-draw variance, pooled over questions. If uncertain (dev) questions separated models better than random controls, dev would be higher.</p>',
+              '<h2>Virtues at a glance</h2>', img(figs['calibrated', 'dev'][0]),
+              '<details open><summary>Virtues with intervals (dev, calibrated)</summary>' + img(figs['calibrated', 'dev'][1]) + '</details>',
+              '<details open><summary>Behaviours, including violence (dev, calibrated)</summary>' + img(figs['calibrated', 'dev'][2]) + '</details>',
+              '<details open><summary>D&D lawfulness and goodness (dev, calibrated)</summary>' + img(figs['calibrated', 'dev'][3]) + '</details>',
+              '<h2>Random control questions (calibrated)</h2>' + ''.join(img(x) for x in figs['calibrated', 'control']),
+              '<h2>Uncalibrated (raw) views</h2>' + ''.join(f'<details><summary>{escape(x.stem)}</summary>{img(x)}</details>' for role in ('dev', 'control') for x in figs['raw', role]),
+              examples(scoring / 'question_tables.jsonl'),
+              '<h2>Limits</h2><p>Stated percentages are self-reports, not logprobs. Labels are automatic virtue grades of each option, not ground truth; label error is not in the intervals. '
+              'Intervals are per-label 95% game/topic cluster bootstraps with no correction for 66 comparisons. The per-virtue slope is pooled across questions, so questions whose options '
+              'differ more on that virtue count more. Luna reasons far less than the others under a token budget (about 80 tokens).</p>',
+              f'<p>Data: <code>{escape(str(scoring))}</code></p><p>-- PI/OpenAI</p>']
+    html = ('<!doctype html><html lang="en"><meta charset="utf-8"><title>Stated-probability tiny eval</title><style>body{font:16px/1.5 system-ui;max-width:1400px;margin:30px auto;padding:0 24px;color:#222}'
+            'img{max-width:100%;height:auto}table{border-collapse:collapse;font-size:14px;margin:10px 0}td,th{padding:5px 10px;border-bottom:1px solid #ddd;text-align:left}'
+            'details{border-top:1px solid #ddd;padding:10px 0}summary{cursor:pointer;font-weight:600}pre{white-space:pre-wrap;background:#fafafa;padding:10px}p{max-width:1050px}</style><body>'
+            + '\n'.join(blocks) + '</body></html>')
+    (out / 'index.html').write_text(html)
+    return out / 'index.html'
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--scores', type=Path, required=True, help='scorer JSON with rows (e.g. scored_identity.json)')
-    parser.add_argument('--question-tables', type=Path, required=True)
-    parser.add_argument('--scenes', type=Path, default=ROOT / 'outputs/20261026_probability_eval_scored/scenes.jsonl')
+    parser.add_argument('--scoring', type=Path, default=ROOT / 'outputs/20261026_probability_eval_scored/scoring')
     parser.add_argument('--out', type=Path, default=ROOT / '.local/choice_preview/probability_eval')
-    parser.add_argument('--mode', default='raw')
     a = parser.parse_args()
-    paths = [p for role in ('dev', 'control') for p in render(a.scores, a.scenes, a.out, a.mode, role)]
-    print('\n'.join(map(str, paths)))
-    (a.out / 'examples.html').write_text(examples(a.question_tables, a.scenes))
+    print(page(a.scoring, a.out))
