@@ -185,7 +185,9 @@ async def run_requests(packets: list[dict], out: Path, *, max_new_usd: float, co
                                         continue
                                     record = {"request_key": key, "request": payload, "http_status": response.status_code, "response": body}
                                     counts["new_requests"] += 1
-                                    if response.status_code == 200 and not provider_timeout and cache_write:
+                                    # A reply that ended in a provider error or a cut-off is never cached, so a rerun redraws it.
+                                    unfinished = any(c.get("finish_reason") in {"error", "length"} or c.get("error") for c in body.get("choices", []))
+                                    if response.status_code == 200 and not provider_timeout and cache_write and not unfinished:
                                         temporary = path.with_suffix(".tmp")
                                         temporary.write_bytes(gzip.compress(json.dumps(record, ensure_ascii=False).encode()))
                                         temporary.replace(path)

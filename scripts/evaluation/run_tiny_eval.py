@@ -101,6 +101,8 @@ def parse(record: dict, config: dict) -> dict:
         return result | {'status': 'api_refusal'}
     if choice['finish_reason'] == 'length':
         return result | {'status': 'length_error'}
+    if choice['finish_reason'] == 'error' or choice.get('error'):
+        return result | {'status': 'infrastructure_error', 'error': choice.get('error')}
     try:
         parsed = json.loads(text)
     except (json.JSONDecodeError, TypeError):
