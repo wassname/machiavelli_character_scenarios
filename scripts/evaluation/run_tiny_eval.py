@@ -267,6 +267,9 @@ def run(out: Path, stage: str, max_usd: float, concurrency: int | None, fresh: b
                 parsed = [followed[r['request_key']] | {'followup_used': True, 'first_reply_usage': q['usage']} if q['status'] == 'length_error' else q | {'followup_used': False}
                           for r, q in zip(receipts, parsed, strict=True)]
         (batch / 'choices.jsonl').write_text(''.join(json.dumps(r, ensure_ascii=False) + '\n' for r in parsed))
+        for r in parsed:  # an invalid reply (bad JSON, wrong sum, cut-off) must not be served from the cache on a rerun
+            if r['status'] != 'ok':
+                (ROOT / 'data/interim/action_choice_cache' / (r['request_key'] + '.json.gz')).unlink(missing_ok=True)
         summary['status_counts'] = dict(Counter(r['status'] for r in parsed))
         summary['choice_is_top'] = sum(r.get('choice_is_top', False) for r in parsed)
         summary['completion_tokens_mean'] = sum(r['usage']['completion_tokens'] for r in parsed if 'usage' in r) / max(1, sum('usage' in r for r in parsed))
