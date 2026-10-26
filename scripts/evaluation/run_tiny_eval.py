@@ -70,7 +70,7 @@ def build(row: dict, draw: int, model: str, config: dict, level: str | None = No
             'source': row['source'], 'eval_cluster': row['eval_cluster'], 'displayed_to_original': mapping,
             'actor_prompt_protocol': config['protocol'], 'option_order_policy': config['option_order_policy'],
             'original_prompt_sha256': hashlib.sha256(row['text'].encode()).hexdigest(), 'minimum_request_interval_seconds': 0,
-            'level': level}}
+            'level': level, 'eval_role': row.get('eval_role')}}
 
 
 def followup_packet(record: dict, config: dict) -> dict:
@@ -156,23 +156,29 @@ def worst_case_usd(p: dict, config: dict) -> float:
     return (len(json.dumps(p['request'], ensure_ascii=False)) / 3 * s['input_usd_per_million'] + p['request']['max_tokens'] * s['output_usd_per_million']) / 1e6
 
 
-def prepare(out: Path, kind: str, config_path: Path, draws: int, models: list[str] | None, smoke_per_source: int) -> None:
+def prepare(out: Path, kind: str, config_path: Path, draws: int, models: list[str] | None, smoke_per_source: int,
+            level: str | None = None, draw_start: int = 0, source: str | None = None, only_ids: list[str] | None = None,
+            selection: Path | None = None, exclude: set[str] | None = None) -> None:
     out.mkdir(parents=True, exist_ok=False)
     config, budget = json.loads(config_path.read_text()), json.loads(BUDGET.read_text())
     models = models or list(config['models'])
     assert set(models) <= set(budget['models'])
-    scenes = select_trial() if kind in ('trial10', 'reasoning_test', 'replay_smoke') else reference_pool()
-    levels = LEVELS if kind == 'reasoning_test' else ['10k'] if kind == 'replay_smoke' else [None]
+    scenes = (select_trial() if kind in ('trial10', 'reasoning_test', 'replay_smoke')
+              else list(map(json.loads, (selection / 'scenes.jsonl').open())) if kind == 'scored' else reference_pool())
+    if exclude:
+        scenes = [s for s in scenes if s['source_id'] not in exclude]
+    levels = LEVELS if kind == 'reasoning_test' else ['10k'] if kind == 'replay_smoke' else [level]
+    scenes = [s for s in scenes if (source is None or s['source'] == source) and (only_ids is None or s['source_id'] in only_ids)]
     if kind == 'replay_smoke':
         scenes = [s for s in scenes if s['source'] == 'machiavelli'][:1]
-    packets = [build(s, d, m, config, level) for s in scenes for d in range(draws) for m in models for level in levels]
+    packets = [build(s, d, m, config, lv) for s in scenes for d in range(draw_start, draws) for m in models for lv in levels]
     if kind == 'replay_smoke':
         # Deliberately too small output cap: forces a cut-off so the follow-up path runs for every model.
         for p in packets:
             p['request']['max_tokens'] = 300
     for s in scenes:
         orders = Counter(tuple(p['metadata']['displayed_to_original'].values()) for p in packets if p['metadata']['source_id'] == s['source_id'])
-        assert len(orders) == min(len(s['choice_text']), draws), 'Option orders not rotated'
+        assert len(orders) == min(len(s['choice_text']), draws - draw_start), 'Option orders not rotated'
     smoke_per_source = 0 if kind == 'replay_smoke' else smoke_per_source
     smoke_ids = [s['source_id'] for src in ('daily_dilemmas', 'machiavelli')
                  for s in sorted((s for s in scenes if s['source'] == src), key=lambda s: hashlib.sha256(f'smoke:{s["source_id"]}'.encode()).hexdigest())[:smoke_per_source]]
@@ -236,7 +242,7 @@ def run(out: Path, stage: str, max_usd: float, concurrency: int | None, fresh: b
             receipts = list(map(json.loads, (batch / 'receipts.jsonl').open()))
             parsed = [parse(r, config) for r in receipts]
             cut = [r for r, q in zip(receipts, parsed, strict=True) if q['status'] == 'length_error']
-            if cut and manifest['kind'] in ('reasoning_test', 'replay_smoke'):
+            if cut:
                 (batch / 'followup').mkdir()
                 spent = summary['new_cost_usd']
                 summary['followup'] = asyncio.run(run_requests([followup_packet(r, config) for r in cut], batch / 'followup', max_new_usd=min(max_usd, remaining) - spent, **caps))
@@ -264,8 +270,14 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('stage', choices=['prepare', 'smoke', 'rest'])
     parser.add_argument('--out', type=Path, required=True)
-    parser.add_argument('--kind', choices=['trial10', 'reference', 'reasoning_test', 'replay_smoke'], default='reference')
+    parser.add_argument('--kind', choices=['trial10', 'reference', 'reasoning_test', 'replay_smoke', 'scored'], default='reference')
+    parser.add_argument('--selection', type=Path, help='Selection directory with scenes.jsonl (kind scored)')
+    parser.add_argument('--exclude-file', type=Path, help='JSON list of source_ids excluded by the eligibility read')
     parser.add_argument('--concurrency', type=int)
+    parser.add_argument('--level', choices=LEVELS)
+    parser.add_argument('--draw-start', type=int, default=0)
+    parser.add_argument('--source', choices=['daily_dilemmas', 'machiavelli'])
+    parser.add_argument('--only-ids', nargs='+')
     parser.add_argument('--fresh', action='store_true', help='Ignore cached replies and draw new ones')
     parser.add_argument('--config', type=Path, default=ROOT / 'data/models/probability_eval.json')
     parser.add_argument('--draws', type=int, default=1)
@@ -278,7 +290,8 @@ if __name__ == '__main__':
         from beartype import beartype
         build, parse = beartype(build), beartype(parse)
     if args.stage == 'prepare':
-        prepare(args.out, args.kind, args.config.resolve(), args.draws, args.models, args.smoke_per_source)
+        exclude = set(json.loads(args.exclude_file.read_text())) if args.exclude_file else None
+        prepare(args.out, args.kind, args.config.resolve(), args.draws, args.models, args.smoke_per_source, args.level, args.draw_start, args.source, args.only_ids, args.selection, exclude)
     else:
         assert args.allow_paid, 'Execution requires --allow-paid'
         run(args.out, args.stage, args.max_usd, args.concurrency, args.fresh)
