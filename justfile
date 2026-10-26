@@ -32,6 +32,12 @@ choice-pca input="outputs/20261025_individual_dimensions" out="outputs/20261026_
     OPENBLAS_NUM_THREADS=1 uv run --locked python scripts/evaluation/pca_choice_profiles.py --input "{{input}}" --out "{{out}}"
     uv run --script scripts/evaluation/plot_pca_choice_profiles.py --input "{{out}}" --out "{{preview}}"
 
+# PI/OpenAI: Rebuild and verify the frozen four-model pilot from native receipts; no inference.
+choice-pilot run="outputs/20261026_differentiated_pilot_v2" preview=".local/choice_preview/pilot":
+    OPENBLAS_NUM_THREADS=1 uv run --locked python scripts/evaluation/score_differentiated_pilot.py --run "{{run}}"
+    uv run --locked python scripts/checks/check_differentiated_pilot.py --run "{{run}}"
+    uv run --script scripts/evaluation/plot_differentiated_pilot.py --run "{{run}}" --out "{{preview}}"
+
 # PI/OpenAI: Restore displayed choices without model calls.
 prepare out:
     uv run --locked python scripts/data/prepare_inputs.py --out "{{out}}"
