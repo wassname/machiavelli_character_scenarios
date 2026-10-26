@@ -43,7 +43,7 @@ def read_rows(paths: list[Path], level: str | None = None, model: str | None = N
         with (gzip.open(path, "rt") if path.suffix == ".gz" else path.open()) as stream:
             for line_no, line in enumerate(stream, 1):
                 r = json.loads(line)
-                if "_meta" in r or (level is not None and str(r["level"]) != level) or (model is not None and r['model'] != model):
+                if "_meta" in r or (level is not None and str(r.get("level")) != level) or (model is not None and r['model'] != model):
                     continue
                 statuses[r["status"]] += 1
                 if r["status"] != "ok":
@@ -55,7 +55,7 @@ def read_rows(paths: list[Path], level: str | None = None, model: str | None = N
                 assert len(p) >= 2 and all(type(v) is int and 0 <= v <= 100 for v in p.values())
                 assert sum(p.values()) == 100
                 rows.append(r | {"original_probabilities": p, "trace": f"{path}:{line_no}"})
-    assert rows, "No valid probability rows"
+    assert rows, f"No valid rows for level={level!r}, model={model!r}; missing levels are untagged, never inferred"
     return rows, dict(statuses)
 
 
@@ -84,7 +84,7 @@ def normalize(logits: np.ndarray) -> np.ndarray:
 
 
 def fit_map(model: dict, reference: dict, ids: list[str], kind: str = "monotone", shrinkage: float = 0., extrapolation: str = "last") -> dict:
-    if kind == 'identity' and not ids:
+    if kind == 'identity':
         return {'x': [0., float(np.log(101))], 'y': [0., float(np.log(101))], 'end_slope': 1.,
                 'kind': kind, 'landmark_ids': [], 'points': [], 'direction_disagreement_fraction': None,
                 'note': 'Identity requires no fitted questions.'}
@@ -153,6 +153,8 @@ def quantile_map(model: dict, reference: dict, ids: list[str]) -> dict:
               'identity_shrinkage': 0., 'strict_identity_fraction': STRICT_SLOPE, 'extrapolation': 'unit',
               'landmark_ids': [], 'fit_ids': ids, 'points': pairs,
               'quantile_levels': levels, 'model_quantiles': x.tolist(), 'reference_quantiles': y.tolist(),
+              'reference_p95_at_integer_edge': bool(np.isclose(y[-1], np.log(101), atol=1e-10)),
+              'model_p95_at_integer_edge': bool(np.isclose(x[-1], np.log(101), atol=1e-10)),
               'direction_disagreement_fraction': sum(p['weight'] * (not p['same_direction']) for p in pairs) / sum(weights),
               'opposed_pair_fraction': sum(p['weight'] * p['opposed'] for p in pairs) / sum(weights),
               'note': 'Transductive unpaired matching of weighted magnitude distributions, equal weight per question; origin anchor and linear origin-to-p05; unit slope above p95. Duplicate x quantiles merge by mean y; zero x constrained to zero. Positive identity fraction prevents new ties.'}
@@ -285,6 +287,7 @@ def write_question_tables(result: dict, comparison_rows: list[dict], reference_r
                     item['geometric_probabilities'] = dict(zip(options, np.exp(baseline).tolist()))
                 else:
                     q = models[model]
+                    item['map_kind'] = q['map_kind']
                     for key in ('raw_logp', 'calibrated_logp', 'raw_nats', 'calibrated_nats'):
                         item[key] = dict(zip(options, q[key]))
                     item['geometric_probabilities'] = dict(zip(options, np.exp(q['raw_logp']).tolist()))
@@ -331,6 +334,7 @@ def analyze(name: str, model_logs: dict, reference: dict, scenes: dict, scores: 
                 nats[model, "raw", sid], nats[model, "calibrated", sid] = raw - baseline, cal - baseline
                 question_rows.append({"source_id": sid, "source": source, "model": model,
                                       "role": next((r for r in ("landmark", "dev", "control", "extreme") if sid in roles.get(r, [])), "unused"),
+                                      'map_kind': source_maps[model]['kind'],
                                       "option_ids": list(scenes[sid]["choice_text"]), "raw_logp": raw.tolist(),
                                       "baseline_logp": baseline.tolist(), "calibrated_logp": cal.tolist(),
                                       "raw_nats": (raw - baseline).tolist(), "calibrated_nats": (cal - baseline).tolist(),
@@ -348,7 +352,8 @@ def analyze(name: str, model_logs: dict, reference: dict, scenes: dict, scores: 
             cohorts['scored'] = roles['dev'] + roles['extreme']
         for role, cohort_ids in cohorts.items():
             rows, coverage = score_labels(cohort_ids, nats, models, scores, dimensions, scenes, replicates)
-            label_rows.extend(r | {"source": source, "role": role} for r in rows)
+            label_rows.extend(r | {"source": source, "role": role,
+                                        'map_kind': source_maps[r['model']]['kind'] if r['mode'] == 'calibrated' else 'identity'} for r in rows)
             source_info[source]["cohorts"][role] = coverage
     result = {"name": name, "models": models, "sources": source_info, "maps": maps,
               "rows": label_rows, "kendall_tau": tau_rows, "question_nats": question_rows}
@@ -443,7 +448,13 @@ def regression_check() -> dict:
     nats = {key: value[perm] if key[-1] == "four" else value for key, value in nats.items()}
     permuted, _ = score_labels(["two", "four"], nats, ["injected", "null"], scores, dimensions, scenes, 100)
     assert rows == permuted
-    return {"equal_question_vs_option_weight": "PASS: 2-option beta .4 and 4-option beta .8 pool to .6, not .6667",
+    higher_variance = {s: x.copy() for s, x in scores.items()}
+    higher_variance['four'][:, :66] *= 2
+    higher_variance_nats = nats | {('injected', mode, 'four'): .8 * higher_variance['four'][:, 0] + 7 for mode in ('raw', 'calibrated')}
+    weighted, _ = score_labels(['two', 'four'], higher_variance_nats, ['injected', 'null'], higher_variance, dimensions, scenes, 100)
+    assert all(abs(r['beta_nats_per_label_unit'] - .72) < 1e-12 for r in weighted if r['model'] == 'injected' and r['family'] == 'virtues')
+    return {"option_count_normalization": "PASS: equal-variance 2-option beta .4 and 4-option beta .8 pool to .6, not option-weighted .6667",
+            "label_variance_weighting": "PASS: raising the second menu variance fourfold gives pooled beta .72, not equal-slope mean .6",
             "constant_question_offsets": "PASS: +7/+5 nats cancel; null model beta 0",
             "constant_scores": "PASS: unidentified coefficient and bootstrap stay null",
             "missing_dnd": "PASS: missing offered-action labels excluded, not zero",
@@ -473,8 +484,11 @@ def plot_maps(result: dict, out: Path) -> Path:
             ax.plot(grid[beyond], y[beyond], color="#b64b35", linestyle="--", label="Extrapolation")
             ax.axvline(mapping["x"][-1], color=".5", linewidth=.7, linestyle=":", label='Last fit knot')
             ax.axvline(np.log(101), color='.65', linewidth=.7, linestyle='-.', label='Integer % edge: ln(101)')
-            count = f"{len(mapping['landmark_ids'])} landmark questions" if mapping['kind'] != 'quantile' else f"{len(mapping['fit_ids'])} scored questions; no landmarks"
-            ax.set_title(model.split("/")[-1].replace('self_', '').replace('_', ' ') + f"\n{count}\nDots = option pairs\n" + source.replace("_", " "), fontsize=8)
+            count = ('Identity: no fit or landmarks' if mapping['kind'] == 'identity'
+                     else f"{len(mapping['fit_ids'])} scored questions; no landmarks" if mapping['kind'] == 'quantile'
+                     else f"{len(mapping['landmark_ids'])} landmark questions")
+            edge_note = '\nReference p95 = 100/0 integer edge' if mapping.get('reference_p95_at_integer_edge', False) else ''
+            ax.set_title(model.split("/")[-1].replace('self_', '').replace('_', ' ') + f"\n{count}\nDots = option pairs\n" + source.replace("_", " ") + edge_note, fontsize=8)
             control = result['name'].startswith('self_')
             ax.set_xlabel((result.get('control_side_labels', ('DS draw 0', 'DS draw 1'))[0] if control else 'Model') + ' |log option odds| (nats)')
             ax.set_ylabel((result.get('control_side_labels', ('DS draw 0', 'DS draw 1'))[1] if control else 'DeepSeek') + ' |log option odds| (nats)')
@@ -642,12 +656,13 @@ def main(args: argparse.Namespace) -> None:
                                            'rule': 'Calibrated primary only for quantile, frozen prior-selected IDs, same 10k level, independent two-draw groups, and no dev-only mean absolute self-noise increase in either source. This is a point-estimate gate, not proof of non-inferiority. Raw identity is always reported.'},
                "self_control_split": 'Frozen prior-selected dev/control/extreme IDs; quantile fits only dev+extreme distributions, identity fits nothing.' if args.control_selection else 'Reserve 100 confidence-spanning landmark questions/source; 20 is a spanning subset. Full-heldout variants share exactly the same held-out IDs. Scored-domain variants use an uncertainty-selected subset plus 20 extremes, selected symmetrically from both control sides.',
                "comparison_map_options": {"kind": args.map_kind, "shrinkage": args.shrinkage, "extrapolation": args.extrapolation},
-               "method": "Average add-one-smoothed log p over draws; softmax gives geometric probability pool. Fit odd increasing isotonic-interpolated pairwise log-odds magnitude map, equal total weight per landmark question. Labels never enter calibration. Apply per source; mean mapped pair odds then softmax. Per-option nats = calibrated log p minus normalized DeepSeek pooled log p. Raw uses the same pooling. Each label is a separate marginal within-question regression: beta = sum_q mean_options(x_centered * nats_centered) / sum_q mean_options(x_centered squared). No question-variance normalization. All questions have equal total option weight; informative menus provide more label variance. Vice polarity follows the named trait in source dimension metadata, not favorable polarity.",
+               "method": "Average add-one-smoothed log p over draws; softmax gives geometric probability pool. Fit odd increasing isotonic-interpolated pairwise log-odds magnitude map, equal total weight per landmark question. Labels never enter calibration. Apply per source; mean mapped pair odds then softmax. Per-option nats = calibrated log p minus normalized DeepSeek pooled log p. Raw uses the same pooling. Each label is a separate marginal within-question regression: beta = sum_q mean_options(x_centered * nats_centered) / sum_q mean_options(x_centered squared). No question-variance normalization. Each question contributes mean option covariance and mean option variance. The final pooled within-question slope weights menus with larger label variance more; it is not an equal-weight average of per-question slopes. Vice polarity follows the named trait in source dimension metadata, not favorable polarity.",
                "uncertainty": "Game/topic-cluster bootstrap of held-out question sufficient statistics, reusing score_choice_dimensions.bootstrap. Draws and fitted landmark maps fixed; excludes calibration-fit uncertainty, label error, fresh-generation uncertainty, selection uncertainty and model-provider changes. Undefined coefficient/replicate remains null, never zero.",
-               "limitations": ["Confidence magnitude and genuine preference strength are not identifiable from different models' landmark answers; even disjoint landmarks can remove real preferences.", "Sketch landmarks use matched questions and are not a substitute for the frozen project-specific dev/control/landmark set.", "Sources remain separate; all label fits are marginal correlated-label associations, not unique causal virtue effects.", "Failed replies and incomplete draw groups are reported/excluded explicitly; no score is substituted.", "Kendall tau-b compares within-question option ranks, not between-model moral scores; all-tied ranks are undefined.",
+               "limitations": ["Noisy-regressor attenuation: paired y-on-x landmark fits can shrink odds toward uniform and add an opposition-to-DeepSeek component to label slopes; identity shrinkage reduces but does not eliminate this concern.", "Confidence magnitude and genuine preference strength are not identifiable from different models' landmark answers; even disjoint landmarks can remove real preferences.", "Sketch landmarks use matched questions and are not a substitute for the frozen project-specific dev/control/landmark set.", "Sources remain separate; all label fits are marginal correlated-label associations, not unique causal virtue effects.", "Failed replies and incomplete draw groups are reported/excluded explicitly; no score is substituted.", "Kendall tau-b compares within-question option ranks, not between-model moral scores; all-tied ranks are undefined.",
                                 "Quantile matching is transductive: it uses evaluated probability distributions themselves and removes any real overall decisiveness difference as well as confidence scale. It preserves direction, not preference strength.",
                                 "Orthogonal/Deming through-origin fit assumes equal x/y measurement error variances; draw-to-draw noise need not satisfy this across different models.",
-                                "Nonlinear mapped pair targets need not be transitive; row-mean projection preserves option order but generally cannot reproduce every fitted pair target for 3+ options."]}
+                                "Nonlinear mapped pair targets need not be transitive; row-mean projection preserves option order but generally cannot reproduce every fitted pair target for 3+ options.",
+                                "A p95 knot at ln(101) is an integer-percentage quantisation boundary (100/0 answers), potentially driven by added extremes, not an estimate of a continuous latent confidence quantile."]}
     (args.out / "summary.json").write_text(json.dumps(summary, indent=2, allow_nan=False) + "\n")
     if comparison_rows:
         demo = comparison_rows[0]
@@ -693,7 +708,7 @@ if __name__ == "__main__":
     parser.add_argument('--control-draws-a', type=int, nargs='+', default=[0])
     parser.add_argument('--control-draws-b', type=int, nargs='+', default=[1])
     parser.add_argument('--control-selection', type=Path)
-    parser.add_argument("--map-kind", choices=("identity", "temperature", "orthogonal", "monotone", "quantile"), default="monotone")
+    parser.add_argument("--map-kind", choices=("identity", "temperature", "orthogonal", "monotone", "quantile"), default="quantile")
     parser.add_argument("--shrinkage", type=float, default=.5)
     parser.add_argument("--extrapolation", choices=("unit", "last"), default="unit")
     parser.add_argument("--reference-level")
