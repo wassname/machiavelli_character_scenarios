@@ -14,7 +14,7 @@ import traceback
 
 from loguru import logger
 
-from action_choice import REFUSAL, SYSTEM, behavior_eligible, ELIGIBILITY_PATH, fill_name_placeholder, render, wrap_scenario
+from action_choice import REFUSAL, SYSTEM, behavior_eligible, ELIGIBILITY_PATH, repair_source_text, render, wrap_scenario
 from billing_reservations import outstanding
 from eval_api import ROOT, digest, run_requests
 
@@ -185,7 +185,7 @@ FOLLOWUP = 'Reasoning budget exhausted. Return only the final JSON object now. T
 
 def build(row: dict, draw: int, model: str, config: dict, level: str | None = None) -> dict:
     content, mapping = draw_order(row, draw, config['option_order_seed'])
-    content = fill_name_placeholder(content)  # repair unfilled player-name placeholders in the source text
+    content = repair_source_text(content)  # repair unfilled player-name placeholders in the source text
     ids = list(mapping)
     schema = {'type': 'object', 'properties': {
         'reasoning': {'type': 'string', 'minLength': 1},

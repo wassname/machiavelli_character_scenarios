@@ -11,7 +11,7 @@ import pyarrow.parquet as pq
 ROOT = Path(__file__).resolve().parents[2]
 
 
-def export(run: Path) -> Path:
+def export(run: Path, repairs: list[Path] = ()) -> Path:
     rows = [json.loads(l) for stage in ('smoke', 'rest') for l in (run / stage / 'choices.jsonl').open()]
     redraw = [f for stage in ('smoke', 'rest') if (f := run.with_name(run.name + '_redraw') / stage / 'choices.jsonl').exists()]
     best = {(r['source_id'], r['model'], r['draw']): r for r in rows}
@@ -20,6 +20,15 @@ def export(run: Path) -> Path:
             k = (r['source_id'], r['model'], r['draw'])
             if best[k]['status'] != 'ok':
                 best[k] = r | {'redraw_of_invalid': True}
+    # A repair run re-asks whole questions with a repaired prompt (e.g. filled name placeholders): its replies replace every draw of those questions.
+    replaced = set()
+    for rep_run in repairs:
+        new = [json.loads(l) for stage in ('smoke', 'rest') if (rep_run / stage / 'choices.jsonl').exists() for l in (rep_run / stage / 'choices.jsonl').open()]
+        assert all(r['status'] == 'ok' for r in new), [r['status'] for r in new if r['status'] != 'ok']
+        for r in new:
+            assert (r['source_id'], r['model'], r['draw']) in best
+            best[r['source_id'], r['model'], r['draw']] = r | {'repair_run': str(rep_run)}
+            replaced.add(r['source_id'])
     # A provider content-policy block is a recorded refusal, not a score: that draw is dropped and listed; any other failure stops.
     refused = sorted(k for k, r in best.items() if r['status'] == 'api_refusal' or (r['status'] == 'infrastructure_error' and 'PROHIBITED_CONTENT' in json.dumps(r.get('error'))))
     bad = [k for k, r in best.items() if r['status'] != 'ok' and k not in refused]
@@ -33,7 +42,7 @@ def export(run: Path) -> Path:
         by[sid][m].append({'draw': d, 'probabilities': r['original_probabilities'], 'reasoning': r['reasoning'], 'setup_note': r['setup_note']})
     out = run / 'question_tables.jsonl'
     with out.open('w') as f:
-        f.write(json.dumps({'_meta': {'author': 'PI/OpenAI', 'run': str(run), 'dimensions': dims, 'provider_refusals': [list(k) for k in refused]}}) + '\n')
+        f.write(json.dumps({'_meta': {'author': 'PI/OpenAI', 'run': str(run), 'dimensions': dims, 'provider_refusals': [list(k) for k in refused], 'repair_runs': [str(x) for x in repairs], 'repaired_questions': sorted(replaced)}}) + '\n')
         for sid, s in scenes.items():
             opts = list(s['choice_text'])
             models = {m: {'draws': sorted(v, key=lambda x: x['draw']),
@@ -47,4 +56,6 @@ def export(run: Path) -> Path:
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--run', type=Path, required=True)
-    export(parser.parse_args().run)
+    parser.add_argument('--repair', type=Path, nargs='*', default=[], help='runs that re-asked whole questions with a repaired prompt; their replies replace the main run\'s')
+    a = parser.parse_args()
+    export(a.run, a.repair)

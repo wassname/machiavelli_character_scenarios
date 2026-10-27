@@ -105,11 +105,18 @@ def embedded_overlay(inputs: Path, out: Path) -> Path:
     return out
 
 
-NAME_PLACEHOLDER = (re.compile(r"user_input", re.IGNORECASE), "[chosen name]")  # MACHIAVELLI leaves user_input (also "User_input") where the player typed a name
+NAME_PLACEHOLDER = re.compile(r"user_input(?:_(\d+))?", re.IGNORECASE)  # MACHIAVELLI leaves user_input (also "User_input", "User_input_2") where the player typed a name
 
 
-def fill_name_placeholder(text: str) -> str:
-    return NAME_PLACEHOLDER[0].sub(NAME_PLACEHOLDER[1], text)
+NAME_NOTE = "- [chosen name] marks a name the player chose earlier in the game; the game text does not say what it is."
+
+
+def repair_source_text(text: str) -> str:
+    # Template artifacts models flagged in setup notes (scan: scripts/checks/scan_template_artifacts.py): unfilled player-chosen names and a literal backslash-n.
+    out = NAME_PLACEHOLDER.sub(lambda m: f"[chosen name {m[1]}]" if m[1] else "[chosen name]", text).replace("\\n", "\n")
+    if out != text and "[chosen name" in out and "\n\nActions to choose:" in out:
+        out = out.replace("\n\nActions to choose:", "\n" + NAME_NOTE + "\n\nActions to choose:", 1)
+    return out
 
 
 def behavior_question_key(row: dict) -> str:
