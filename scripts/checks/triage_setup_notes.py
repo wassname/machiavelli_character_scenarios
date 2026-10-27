@@ -41,10 +41,11 @@ def main(runs: list[Path], out: Path) -> None:
                 examples[k].append(f'{m} · {sid}: {note[:240]}')
     models = sorted({n[0] for n in notes})
     total = Counter(n[1] for n in notes)
-    rows = [[k, *(f"{counts[k][s] / total[s]:.0%}" for s in ('daily_dilemmas', 'machiavelli')), *(counts[k][m] for m in models)] for k in [*KINDS, 'other', 'empty']]
+    sources = [s for s in ('daily_dilemmas', 'machiavelli') if total[s]]
+    rows = [[k, *(f"{counts[k][s] / total[s]:.0%}" for s in sources), *(counts[k][m] for m in models)] for k in [*KINDS, 'other', 'empty']]
     report = (f'# What models flag in setup notes\n\nRuns: {", ".join(str(r.relative_to(ROOT)) for r in runs)}; {len(notes):,} replies. '
               'A note can match several kinds; patterns in `scripts/checks/triage_setup_notes.py`.\n\n'
-              + tabulate(rows, headers=['Kind', 'Everyday (% of replies)', 'Games (% of replies)', *models], tablefmt='github')
+              + tabulate(rows, headers=['Kind', *({'daily_dilemmas': 'Everyday (% of replies)', 'machiavelli': 'Games (% of replies)'}[s] for s in sources), *models], tablefmt='github')
               + '\n\n## Hash-chosen examples\n\n' + '\n\n'.join(f'### {k}\n\n' + '\n'.join(f'- {e}' for e in v) for k, v in examples.items()) + '\n\n-- PI/OpenAI\n')
     out.mkdir(parents=True, exist_ok=True)
     (out / 'setup_note_triage.md').write_text(report)
