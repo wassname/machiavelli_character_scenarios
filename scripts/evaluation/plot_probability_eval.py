@@ -636,7 +636,7 @@ def plot_label_structure(basis: dict, groups: dict, out: Path) -> Path:
 
 
 def plot_pc_scatter(lines: list[dict], basis: dict, maps: dict, identity: dict, fold: dict, out: Path) -> tuple[Path, str]:
-    # Models in calibrated nats along PC1-3: left PC1 vs PC2, right PC2 vs PC3. Crosses = 95% intervals; small hollow ring = uncalibrated; grey box = DeepSeek self swap band.
+    # Models in calibrated nats along PC1-3: left PC1 vs PC2, right PC2 vs PC3. Crosses = 95% intervals; small hollow ring = uncalibrated; DeepSeek at (0, 0) as the reference.
     ds = 'deepseek/deepseek-v4.1-flash'
     models = [m for m in lines[1]['models'] if m != ds]
     fig, axs = plt.subplots(2, 2, figsize=(13, 11), constrained_layout=True)
@@ -651,9 +651,8 @@ def plot_pc_scatter(lines: list[dict], basis: dict, maps: dict, identity: dict, 
         short_name = lambda k: f'PC{k + 1}' + (' ~goodness' if k == 0 else f' {b["names"][k]}')
         for c, (kx, ky) in enumerate(((0, 1), (1, 2))):
             ax = axs[r, c]
-            j = len(models)
-            ax.add_patch(plt.Rectangle((cal[1][j, kx], cal[1][j, ky]), cal[2][j, kx] - cal[1][j, kx], cal[2][j, ky] - cal[1][j, ky], color='#eeeeee', zorder=0))
-            logo(ax, cal[0][j, kx], cal[0][j, ky], 'DeepSeek repeat', .14)
+            logo(ax, 0, 0, 'DeepSeek repeat', .16)  # DeepSeek is the reference: (0, 0) by definition
+            ax.annotate('DeepSeek (reference)', (0, 0), xytext=(10, -14), textcoords='offset points', color='#666666', fontsize=8)
             for j, m in enumerate(models):
                 n = short(m)
                 x, y = cal[0][j, kx], cal[0][j, ky]
@@ -724,28 +723,29 @@ def plot_style_spider(lines: list[dict], basis: dict, groups: dict, maps: dict, 
 
 
 def plot_dnd_scatter(res: dict, keep: list, dims: list, models: list, out: Path) -> Path:
-    # D&D in calibrated nats: x = toward the more lawful option, y = toward the more good option; crosses = 95% intervals; grey box = DeepSeek self swap band.
+    # D&D in calibrated nats: x = toward the more lawful option, y = toward the more good option; crosses = 95% intervals; DeepSeek at (0, 0) as the reference.
     k_order = next(k for k, i in enumerate(keep) if dims[i]['id'] == 'order')
     k_good = next(k for k, i in enumerate(keep) if dims[i]['id'] == 'morality')
     fig, axs = plt.subplots(1, 2, figsize=(12, 5.4), constrained_layout=True, sharex=True, sharey=True)
     for ax, (src, name) in zip(axs, SOURCES.items()):
         point, lo, hi, n, inf = res['calibrated'][src]
-        j = len(models)
-        ax.add_patch(plt.Rectangle((lo[j, k_order], lo[j, k_good]), hi[j, k_order] - lo[j, k_order], hi[j, k_good] - lo[j, k_good], color='#eeeeee', zorder=0))
         for j, m in enumerate(models):
             col = COLORS[short(m)]
             x, y = point[j, k_order], point[j, k_good]
             ax.errorbar(x, y, xerr=[[x - lo[j, k_order]], [hi[j, k_order] - x]], yerr=[[y - lo[j, k_good]], [hi[j, k_good] - y]], fmt='none', ecolor=col, lw=1.2, capsize=3)
             logo(ax, x, y, short(m))
             ax.annotate(short(m), (x, y), xytext=(12, 10), textcoords='offset points', color=col, fontsize=9, weight='bold')
-        logo(ax, point[-1, k_order], point[-1, k_good], 'DeepSeek repeat', .14)
+        logo(ax, 0, 0, 'DeepSeek repeat', .16)  # DeepSeek is the reference: (0, 0) by definition
+        ax.annotate('DeepSeek (reference)', (0, 0), xytext=(10, -14), textcoords='offset points', color='#666666', fontsize=8)
+        for (qx, qy, txt) in ((0.98, 0.98, 'lawful good'), (0.02, 0.98, 'chaotic good'), (0.02, 0.02, 'chaotic evil'), (0.98, 0.02, 'lawful evil')):
+            ax.text(qx, qy, txt, transform=ax.transAxes, ha='right' if qx > .5 else 'left', va='top' if qy > .5 else 'bottom', color='#aaaaaa', fontsize=9, style='italic')
         ax.axhline(0, color='#888888', lw=.8)
         ax.axvline(0, color='#888888', lw=.8)
         ax.set_title(f'{name} (lawful: {inf[k_order]} questions, good: {inf[k_good]})', loc='left', fontsize=10)
-        ax.set_xlabel('lawful [nats]')
+        ax.set_xlabel('\u2190 chaotic | lawful \u2192  [nats vs DeepSeek]')
         for sp in ('top', 'right'):
             ax.spines[sp].set_visible(False)
-    axs[0].set_ylabel('good [nats]')
+    axs[0].set_ylabel('\u2190 evil | good \u2192  [nats vs DeepSeek]')
     path = out / 'dnd_scatter.png'
     fig.savefig(path, dpi=110)
     plt.close(fig)
@@ -812,7 +812,7 @@ def page_random(tables: Path, out: Path, title: str) -> Path:
               'PC2 and PC3 are the largest trade-offs left; names come from the groups at each end.</p>',
               '<h2>2. Where each model sits on the components</h2>', img(overall_png),
               '<p>Calibrated nats vs DeepSeek toward the option higher on each component; left PC1 vs PC2, right PC2 vs PC3. Cross = 95% interval (resampling games/topics, then each model\'s two draws); '
-              'small hollow ring = uncalibrated. DeepSeek repeat = how far DeepSeek\'s two answers to the same questions differ from each other; the grey box is the 95% range of that difference when the two answers are shuffled at random, i.e. DeepSeek\'s own run-to-run variation. A model inside the grey box is no further from DeepSeek than DeepSeek is from itself. '
+              'small hollow ring = uncalibrated. DeepSeek is the reference, so it sits at (0, 0) by definition; its own run-to-run variation (its two answers compared) is in the Details numbers and is about the size of the smaller intervals. '
               'Most of the interval width comes from differences between games/topics, not draws, so more draws would shrink it only a little; more questions would help.</p>',
               '<details><summary>Numbers, with the chosen-option check</summary>' + overall_table + '</details>',
               '<h2>3. Style: virtue-group preferences once overall goodness is removed</h2>', img(spider_png),
@@ -820,7 +820,7 @@ def page_random(tables: Path, out: Path, title: str) -> Path:
               '<i>than their overall goodness would predict</i>, more than DeepSeek does. Filled dot = 95% interval excludes 0 (for the DeepSeek repeat: outside DeepSeek\'s run-to-run range); hollow = not distinguishable from DeepSeek.</p>',
               '<details><summary>Numbers</summary>' + spider_table + '</details>',
               '<h2>4. D&D alignment</h2>', img(dnd_png),
-              '<p>Calibrated nats toward the more lawful (x) and more good (y) option, from the source D&D labels. Crosses = 95% intervals. DeepSeek repeat = how far DeepSeek\'s two answers to the same questions differ from each other; the grey box is the 95% range of that difference when the two answers are shuffled at random, i.e. DeepSeek\'s own run-to-run variation. A model inside the grey box is no further from DeepSeek than DeepSeek is from itself.</p>',
+              '<p>Calibrated nats toward the more lawful (x) and more good (y) option, from the source D&D labels. Crosses = 95% intervals. DeepSeek is the reference, so it sits at (0, 0) by definition.</p>',
               '<h2>5. Calibration: decisiveness before and after</h2>', img(calib_png),
               '<p>Each curve: how far apart a model\'s stated percentages for two options of a question are (absolute log-odds, each question weighted equally). Left of DeepSeek (black) = spreads its percentages more evenly. '
               'Calibration maps each model onto DeepSeek\'s curve using quantiles fitted on the other half of the questions; option order within a question never changes. '
