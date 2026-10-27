@@ -771,7 +771,7 @@ def plot_dnd_scatter(res: dict, keep: list, dims: list, models: list, out: Path)
 def page_random(tables: Path, out: Path, title: str) -> Path:
     # Page for a hash-random question set, in nats vs DeepSeek: label structure, overall goodness, style once goodness is removed, D&D, calibration, details.
     out.mkdir(parents=True, exist_ok=True)
-    img = lambda p: f'<img src="{p.name}" alt="{escape(p.stem)}">'
+    img = lambda p: f'<img src="{p.name}?v={int(p.stat().st_mtime)}" alt="{escape(p.stem)}">'  # file time in the URL so browsers do not show a cached old plot
     lines, maps, identity, fold = load_calibration(tables)
     groups = json.loads((ROOT / 'rubrics/virtue_display_groups.json').read_text())['groups']
     basis = virtue_basis(lines, groups)
