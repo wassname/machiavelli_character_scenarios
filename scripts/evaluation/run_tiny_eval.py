@@ -267,7 +267,7 @@ def prepare(out: Path, kind: str, config_path: Path, draws: int, models: list[st
     if kind == 'replay_smoke':
         scenes = [s for s in scenes if s['source'] == 'machiavelli'][:1]
     packets = [build(s, d, m, config, lv) for s in scenes for d in range(draw_start, draws) for m in models for lv in levels]
-    bad = sorted({p['metadata']['source_id'] for p in packets if 'user_input' in json.dumps(p['request']['messages'])})
+    bad = sorted({p['metadata']['source_id'] for p in packets if 'user_input' in json.dumps(p['request']['messages']).lower()})
     assert not bad, f"Unrepaired user_input name placeholder in prompts: {bad}"
     if kind == 'replay_smoke':
         # Deliberately too small output cap: forces a cut-off so the follow-up path runs for every model.

@@ -23,10 +23,10 @@ ETHICS = re.compile(r"\b(integrity|honest|ethic|moral|fair|wrong|harm|right thin
 
 def load(run: Path) -> dict:
     rows = [json.loads(l) for stage in ('smoke', 'rest') for l in (run / stage / 'choices.jsonl').open()]
-    redraw = run.with_name(run.name + '_redraw') / 'rest/choices.jsonl'
+    redraw = [f for stage in ('smoke', 'rest') if (f := run.with_name(run.name + '_redraw') / stage / 'choices.jsonl').exists()]
     out = {(r['source_id'], r['model'], r['draw']): r for r in rows}
-    if redraw.exists():  # a recorded new attempt replaces an invalid reply; the invalid one stays in the run folder
-        for r in map(json.loads, redraw.open()):
+    for f in redraw:  # a recorded new attempt replaces an invalid reply; the invalid one stays in the run folder
+        for r in map(json.loads, f.open()):
             k = (r['source_id'], r['model'], r['draw'])
             if out[k]['status'] != 'ok':
                 out[k] = r | {'redraw_of_invalid': True}

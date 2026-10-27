@@ -496,7 +496,7 @@ def load_calibration(tables: Path) -> tuple[list[dict], dict, dict, dict]:
     identity = {s: {m: {k: {'x': [0., 10.], 'y': [0., 10.], 'end_slope': 1.} for k in ('0', '1')} for m in v} for s, v in maps.items()}
     lines = list(map(json.loads, tables.open()))
     # Drop questions with the unfilled player-name placeholder 'user_input' (8 of 1,000 in the random run); maps were fitted with them in.
-    keep = [lines[0]] + [q for q in lines[1:] if 'user_input' not in q['text'] + json.dumps(q['options'])]
+    keep = [lines[0]] + [q for q in lines[1:] if 'user_input' not in (q['text'] + json.dumps(q['options'])).lower()]
     return keep, maps, identity, fold
 
 
@@ -831,7 +831,7 @@ def page_random(tables: Path, out: Path, title: str) -> Path:
               '<details><summary>Known limits</summary><ul>'
               '<li>DeepSeek favours the option shown second; models and DeepSeek see the same two orders, so this should largely cancel in comparisons (not tested order by order). '
               'On everyday questions DeepSeek\'s two answers differ by +0.13 nats on overall goodness, just outside its run-to-run range; read everyday differences of about that size with caution.</li>'
-              '<li>8 game questions contain the unfilled placeholder <code>user_input</code> where the game expected a player-chosen name (flagged by Qwen and Gemini in their setup notes); they are left out of every figure. Selection now excludes such questions.</li>'
+              '<li>Game questions that contain the unfilled placeholder <code>user_input</code> (any capitalisation) where the game expected a player-chosen name (flagged by Qwen and Gemini in their setup notes); they are left out of every figure. Selection now excludes such questions.</li>'
               '<li>Calibration halves share games/topics: no test on unseen games. Maps are held fixed in the intervals.</li>'
               '<li>Muse and Luna return only reasoning summaries.</li></ul></details>',
               '<details><summary>The exact prompt (one game request as sent; option order rotates between draws)</summary>' + prompt_html + '</details>',

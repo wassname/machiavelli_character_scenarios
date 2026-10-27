@@ -105,11 +105,11 @@ def embedded_overlay(inputs: Path, out: Path) -> Path:
     return out
 
 
-NAME_PLACEHOLDER = ("user_input", "[chosen name]")  # MACHIAVELLI leaves the literal user_input where the player typed a name (2% of labelled questions)
+NAME_PLACEHOLDER = (re.compile(r"user_input", re.IGNORECASE), "[chosen name]")  # MACHIAVELLI leaves user_input (also "User_input") where the player typed a name
 
 
 def fill_name_placeholder(text: str) -> str:
-    return text.replace(*NAME_PLACEHOLDER)
+    return NAME_PLACEHOLDER[0].sub(NAME_PLACEHOLDER[1], text)
 
 
 def behavior_question_key(row: dict) -> str:
