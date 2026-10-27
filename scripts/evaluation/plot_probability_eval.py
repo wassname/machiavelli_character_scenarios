@@ -12,6 +12,8 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import numpy as np
+from matplotlib.offsetbox import AnnotationBbox, OffsetImage
+from PIL import Image
 from tabulate import tabulate
 
 import sys
@@ -23,7 +25,8 @@ SOURCES = {'daily_dilemmas': 'Everyday dilemmas', 'machiavelli': 'Game summaries
 UNIT = {'expected': 'Label-score difference vs DeepSeek (probability-weighted)', 'raw': 'Nats per unit of label score, model minus DeepSeek',
         'calibrated': 'Nats per unit of label score, model minus DeepSeek (calibrated)'}
 COMBOS = ((0, 0), (0, 1), (1, 1))  # draw pairs used to resample 2 draws within a question
-COLORS = {'Muse': '#7b3294', 'Qwen': '#c65a00', 'Gemini': '#1b7837', 'Luna': '#007a92', 'DeepSeek self': '#999999'}
+COLORS = {'Muse': '#0467DF', 'Qwen': '#6950EF', 'Gemini': '#E37400', 'Luna': '#111111', 'DeepSeek self': '#8a8a8a'}  # near each lab's brand colour, kept distinct
+LOGOS = {'Muse': 'meta', 'Qwen': 'qwen', 'Gemini': 'google', 'Luna': 'openai', 'DeepSeek self': 'deepseek'}  # data/logos/*.png, from wassname.github.io/ml-bench
 
 
 def short(model: str) -> str:
@@ -574,92 +577,102 @@ def nats_per_label(tables: Path, out: Path) -> tuple[list[Path], str]:
     return figs, tabulate(dnd_rows, headers=['Source', 'Model', 'D&D axis', 'Questions where it differs', 'Uncalibrated nats (95%)', 'Calibrated nats (95%)'], tablefmt='html')
 
 
-def virtue_basis(lines: list[dict]) -> dict:
-    # Per source: direct-virtue indices, favourable signs, first principal axis v1 (overall goodness) and axis shares, from label scores only.
+def logo(ax, x: float, y: float, name: str, size: float = .2) -> None:
+    # Lab logo as the marker, on a white disc so it reads over error bars.
+    im = Image.open(ROOT / 'data/logos' / f'{LOGOS[name]}.png').convert('RGBA')
+    ax.add_artist(AnnotationBbox(OffsetImage(np.asarray(im), zoom=size * 96 / max(im.size)), (x, y), frameon=True, pad=.15,
+                                 bboxprops={'boxstyle': 'circle', 'fc': 'white', 'ec': COLORS[name], 'lw': 1.2}, zorder=4))
+
+
+def virtue_basis(lines: list[dict], groups: dict) -> dict:
+    # Per source: first 3 principal axes of the 66 direct virtue labels (favourable sign, centred within question), named from the virtue groups' loadings.
     dims = lines[0]['_meta']['dimensions']
     direct = [i for i, d in enumerate(dims) if d['family'] == 'virtues' and d['derived_from'] is None]
     fav = np.array([-1. if dims[i]['kind'] == 'vices' else 1. for i in direct])
+    ids = [dims[i]['id'] for i in direct]
     out = {}
     for src in SOURCES:
         S = [np.array([q['option_scores'][x] for x in q['options']], float)[:, direct] * fav for q in lines[1:] if q['source'] == src]
         Z = np.vstack([x - x.mean(0) for x in S if np.isfinite(x).all()])
         _, sv, Vt = np.linalg.svd(Z, full_matrices=False)
-        rational = np.array(['rationalist' in dims[i]['id'] for i in direct])
-        v2 = Vt[1] * np.sign(Vt[1][rational].mean())  # axis 2 oriented: positive = toward the rationalist virtues
-        out[src] = {'v1': Vt[0] * np.sign(Vt[0].sum()), 'v2': v2, 'share': sv ** 2 / (sv ** 2).sum(), 'Z': Z}
-    return {'direct': direct, 'fav': fav, 'ids': [dims[i]['id'] for i in direct], 'labels': [dims[i]['label'] for i in direct], 'src': out}
+        V, load, names = [], [], []
+        for k in range(3):
+            g = np.array([np.mean([Vt[k][ids.index(i)] for i in items]) for items in groups.values()])
+            sgn = np.sign(g.sum()) if k == 0 else np.sign(g[list(groups).index('Truthfulness')] or 1)  # PC1: more virtue = +; PC2-3: truthfulness side = +
+            V.append(Vt[k] * sgn)
+            load.append(g * sgn)
+            order = np.argsort(load[-1])
+            names.append('goodness' if k == 0 else f'{" & ".join(list(groups)[i].lower() for i in order[-2:][::-1])} \u2194 {" & ".join(list(groups)[i].lower() for i in order[:2])}')
+        out[src] = {'V': np.array(V), 'load': np.array(load), 'names': names, 'share': sv ** 2 / (sv ** 2).sum()}
+    return {'direct': direct, 'fav': fav, 'ids': ids, 'src': out}
 
 
 def plot_label_structure(basis: dict, groups: dict, out: Path) -> Path:
-    # Why every virtue gives the same order: scree of label axes, and correlations between the 9 virtue groups (option scores centred within question).
-    fig, axs = plt.subplots(1, 3, figsize=(15, 4.6), constrained_layout=True, gridspec_kw={'width_ratios': [1, 1.25, 1.25]})
-    for src, name in SOURCES.items():
-        sh = basis['src'][src]['share'][:8]
-        axs[0].plot(range(1, 9), sh, 'o-', color='#333333' if src == 'machiavelli' else '#999999', label=name)
-    axs[0].set_xlabel('label axis (principal component)')
-    axs[0].set_ylabel('share of virtue-label variation')
-    axs[0].legend(frameon=False)
-    axs[0].set_title('One axis (overall goodness) holds ~70%', loc='left', fontsize=10)
+    # Named components: loading of each virtue group on PC1-3, per source (positive bar = that group rises along the axis).
+    fig, axs = plt.subplots(2, 3, figsize=(14, 6.4), constrained_layout=True, sharex=True, sharey=True)
     names = list(groups)
-    for ax, (src, name) in zip(axs[1:], SOURCES.items()):
-        Z = basis['src'][src]['Z']
-        G = np.array([Z[:, [basis['ids'].index(i) for i in items]].mean(1) for items in groups.values()])
-        C = np.corrcoef(G)
-        im = ax.imshow(C, cmap='RdBu', vmin=-1, vmax=1)
-        for (r, c), v in np.ndenumerate(C):
-            ax.text(c, r, f'{v:.1f}', ha='center', va='center', fontsize=7, color='white' if abs(v) > .6 else 'black')
-        ax.set_xticks(range(len(names)), names, rotation=60, ha='right', fontsize=8)
-        ax.set_yticks(range(len(names)), names, fontsize=8)
-        ax.set_title(f'{name}: correlation between virtue groups', loc='left', fontsize=10)
-    fig.colorbar(im, ax=axs[1:], shrink=.8, label='correlation across options')
+    for r, (src, sname) in enumerate(SOURCES.items()):
+        b = basis['src'][src]
+        for k in range(3):
+            ax = axs[r, k]
+            vals = b['load'][k]
+            ax.barh(range(len(names)), vals, color=['#4b5563' if v > 0 else '#c7cbd1' for v in vals], height=.7)
+            ax.axvline(0, color='#888888', lw=.8)
+            ax.set_yticks(range(len(names)), names, fontsize=9)
+            ax.invert_yaxis()
+            ax.set_title(f'{sname} \u00b7 PC{k + 1} ({b["share"][k]:.0%})\n{b["names"][k]}', loc='left', fontsize=9)
+            for sp in ('top', 'right'):
+                ax.spines[sp].set_visible(False)
+    for ax in axs[1]:
+        ax.set_xlabel('mean loading of the group\'s virtues')
     path = out / 'label_structure.png'
     fig.savefig(path, dpi=110)
     plt.close(fig)
     return path
 
 
-def plot_overall_goodness(lines: list[dict], basis: dict, maps: dict, identity: dict, fold: dict, out: Path) -> tuple[Path, str]:
-    # Headline scatter: calibrated nats toward the option higher on axis 1 (overall goodness, x) and axis 2 (compassion <-> rationalist virtues, y).
-    # Crosses = 95% intervals; hollow = uncalibrated; grey box = DeepSeek self swap band.
+def plot_pc_scatter(lines: list[dict], basis: dict, maps: dict, identity: dict, fold: dict, out: Path) -> tuple[Path, str]:
+    # Models in calibrated nats along PC1-3: left PC1 vs PC2, right PC2 vs PC3. Crosses = 95% intervals; small hollow ring = uncalibrated; grey box = DeepSeek self swap band.
     ds = 'deepseek/deepseek-v4.1-flash'
     models = [m for m in lines[1]['models'] if m != ds]
-    fig, axs = plt.subplots(1, 2, figsize=(13, 5.6), constrained_layout=True, sharex=True, sharey=True)
+    fig, axs = plt.subplots(2, 2, figsize=(13, 11), constrained_layout=True)
     rows = []
-    for ax, (src, name) in zip(axs, SOURCES.items()):
-        V = np.stack([basis['src'][src]['v1'], basis['src'][src]['v2']], 1)
+    for r, (src, sname) in enumerate(SOURCES.items()):
+        b = basis['src'][src]
+        V = b['V'].T
         g = lambda q, V=V: np.array([q['option_scores'][x] for x in q['options']], float)[:, basis['direct']] * basis['fav'] @ V
         raw = nats_core(lines, src, g, identity, fold)
         cal = nats_core(lines, src, g, maps, fold)
         top = chosen_option_level(lines, src, lambda q, V=V: g(q)[:, 0] / np.sqrt(len(V)))
-        j = len(models)
-        ax.add_patch(plt.Rectangle((cal[1][j, 0], cal[1][j, 1]), cal[2][j, 0] - cal[1][j, 0], cal[2][j, 1] - cal[1][j, 1], color='#eeeeee', zorder=0))
-        ax.plot(cal[0][j, 0], cal[0][j, 1], 'o', color='#888888', ms=5)
-        ax.annotate('DeepSeek self', (cal[0][j, 0], cal[0][j, 1]), xytext=(6, -12), textcoords='offset points', color='#888888', fontsize=8)
-        for j, m in enumerate(models):
-            col = COLORS[short(m)]
-            x, y = cal[0][j]
-            ax.errorbar(x, y, xerr=[[x - cal[1][j, 0]], [cal[2][j, 0] - x]], yerr=[[y - cal[1][j, 1]], [cal[2][j, 1] - y]], fmt='o', color=col, ms=8, lw=1.3, capsize=3)
-            ax.plot(*raw[0][j], 'o', mfc='none', mec=col, ms=7)
-            ax.annotate('', cal[0][j], raw[0][j], arrowprops={'arrowstyle': '->', 'color': col, 'lw': .7, 'alpha': .6})
-            ax.annotate(short(m), (x, y), xytext=(7, 7), textcoords='offset points', color=col, fontsize=10, weight='bold')
-        ax.axhline(0, color='#888888', lw=.8)
-        ax.axvline(0, color='#888888', lw=.8)
-        sh = basis['src'][src]['share']
-        ax.set_title(f'{name}', loc='left')
-        ax.set_xlabel(f'axis 1, overall goodness ({sh[0]:.0%}): nats toward the more virtuous option')
-        for sp in ('top', 'right'):
-            ax.spines[sp].set_visible(False)
+        short_name = lambda k: f'PC{k + 1}' + (' ~goodness' if k == 0 else f' {b["names"][k]}')
+        for c, (kx, ky) in enumerate(((0, 1), (1, 2))):
+            ax = axs[r, c]
+            j = len(models)
+            ax.add_patch(plt.Rectangle((cal[1][j, kx], cal[1][j, ky]), cal[2][j, kx] - cal[1][j, kx], cal[2][j, ky] - cal[1][j, ky], color='#eeeeee', zorder=0))
+            logo(ax, cal[0][j, kx], cal[0][j, ky], 'DeepSeek self', .14)
+            for j, m in enumerate(models):
+                n = short(m)
+                x, y = cal[0][j, kx], cal[0][j, ky]
+                ax.errorbar(x, y, xerr=[[x - cal[1][j, kx]], [cal[2][j, kx] - x]], yerr=[[y - cal[1][j, ky]], [cal[2][j, ky] - y]], fmt='none', ecolor=COLORS[n], lw=1.3, capsize=3, zorder=2)
+                ax.plot(raw[0][j, kx], raw[0][j, ky], 'o', mfc='none', mec=COLORS[n], ms=6, zorder=1)
+                ax.annotate('', (x, y), (raw[0][j, kx], raw[0][j, ky]), arrowprops={'arrowstyle': '-', 'color': COLORS[n], 'lw': .6, 'alpha': .5, 'ls': ':'}, zorder=1)
+                logo(ax, x, y, n)
+                ax.annotate(n, (x, y), xytext=(12, 10), textcoords='offset points', color=COLORS[n], fontsize=9, weight='bold')
+            ax.axhline(0, color='#aaaaaa', lw=.8)
+            ax.axvline(0, color='#aaaaaa', lw=.8)
+            ax.set_xlabel(f'{short_name(kx)} [nats]', fontsize=9)
+            ax.set_ylabel(f'{short_name(ky)} [nats]', fontsize=9)
+            ax.set_title(sname, loc='left', fontsize=10)
+            for sp in ('top', 'right'):
+                ax.spines[sp].set_visible(False)
         for j, m in enumerate(models + ['DeepSeek self']):
             self_ = m == 'DeepSeek self'
-            rows.append([name, short(m)] + [fmt(raw[0][j, k], raw[1][j, k], raw[2][j, k], self_) for k in (0, 1)]
-                        + (['', ''] if self_ else [fmt(cal[0][j, k], cal[1][j, k], cal[2][j, k]) for k in (0, 1)])
-                        + ['' if self_ else fmt(top[0][j], top[1][j], top[2][j]), cal[3]])
-    axs[0].set_ylabel('axis 2 (~9%): \u2190 compassion | rationalist virtues \u2192  (nats)')
-    path = out / 'overall_goodness.png'
+            rows.append([sname, short(m)] + [fmt(cal[0][j, k], cal[1][j, k], cal[2][j, k], self_) for k in range(3)]
+                        + [fmt(raw[0][j, 0], raw[1][j, 0], raw[2][j, 0], self_), '' if self_ else fmt(top[0][j], top[1][j], top[2][j]), cal[3]])
+    path = out / 'pc_scatter.png'
     fig.savefig(path, dpi=110)
     plt.close(fig)
-    table = tabulate(rows, headers=['Source', 'Model', 'Axis 1 uncalibrated', 'Axis 2 uncalibrated', 'Axis 1 calibrated (95%)', 'Axis 2 calibrated (95%)',
-                                    'Chosen option only: axis-1 score vs DeepSeek (95%)', 'Questions'], tablefmt='html')
+    table = tabulate(rows, headers=['Source', 'Model', 'PC1 calibrated (95%)', 'PC2 calibrated', 'PC3 calibrated', 'PC1 uncalibrated', 'PC1 chosen option only', 'Questions'], tablefmt='html')
     return path, table
 
 
@@ -672,7 +685,7 @@ def plot_style_spider(lines: list[dict], basis: dict, groups: dict, maps: dict, 
     fig, axs = plt.subplots(1, 2, figsize=(13, 6.2), subplot_kw={'projection': 'polar'}, constrained_layout=True)
     rows = []
     for ax, (src, name) in zip(axs, SOURCES.items()):
-        v1 = basis['src'][src]['v1']
+        v1 = basis['src'][src]['V'][0]
         gidx = [[basis['ids'].index(i) for i in items] for items in groups.values()]
 
         def resid(q, v1=v1, gidx=gidx):
@@ -718,17 +731,17 @@ def plot_dnd_scatter(res: dict, keep: list, dims: list, models: list, out: Path)
         for j, m in enumerate(models):
             col = COLORS[short(m)]
             x, y = point[j, k_order], point[j, k_good]
-            ax.errorbar(x, y, xerr=[[x - lo[j, k_order]], [hi[j, k_order] - x]], yerr=[[y - lo[j, k_good]], [hi[j, k_good] - y]], fmt='o', color=col, ms=8, lw=1.2, capsize=3)
-            ax.annotate(short(m), (x, y), xytext=(7, 7), textcoords='offset points', color=col, fontsize=10)
-        ax.plot(point[-1, k_order], point[-1, k_good], 'o', color='#888888', ms=5)
-        ax.annotate('DeepSeek self', (point[-1, k_order], point[-1, k_good]), xytext=(7, -12), textcoords='offset points', color='#888888', fontsize=8)
+            ax.errorbar(x, y, xerr=[[x - lo[j, k_order]], [hi[j, k_order] - x]], yerr=[[y - lo[j, k_good]], [hi[j, k_good] - y]], fmt='none', ecolor=col, lw=1.2, capsize=3)
+            logo(ax, x, y, short(m))
+            ax.annotate(short(m), (x, y), xytext=(12, 10), textcoords='offset points', color=col, fontsize=9, weight='bold')
+        logo(ax, point[-1, k_order], point[-1, k_good], 'DeepSeek self', .14)
         ax.axhline(0, color='#888888', lw=.8)
         ax.axvline(0, color='#888888', lw=.8)
         ax.set_title(f'{name} (lawful: {inf[k_order]} questions, good: {inf[k_good]})', loc='left', fontsize=10)
-        ax.set_xlabel('nats toward the more lawful option (vs DeepSeek)')
+        ax.set_xlabel('lawful [nats]')
         for sp in ('top', 'right'):
             ax.spines[sp].set_visible(False)
-    axs[0].set_ylabel('nats toward the more good option (vs DeepSeek)')
+    axs[0].set_ylabel('good [nats]')
     path = out / 'dnd_scatter.png'
     fig.savefig(path, dpi=110)
     plt.close(fig)
@@ -741,7 +754,7 @@ def page_random(tables: Path, out: Path, title: str) -> Path:
     img = lambda p: f'<img src="{p.name}" alt="{escape(p.stem)}">'
     lines, maps, identity, fold = load_calibration(tables)
     groups = json.loads((ROOT / 'rubrics/virtue_display_groups.json').read_text())['groups']
-    basis = virtue_basis(lines)
+    basis = virtue_basis(lines, groups)
     ds = 'deepseek/deepseek-v4.1-flash'
     models = [m for m in lines[1]['models'] if m != ds]
     dims = lines[0]['_meta']['dimensions']
@@ -750,7 +763,7 @@ def page_random(tables: Path, out: Path, title: str) -> Path:
     label_fn = lambda q: np.array([q['option_scores'][x] for x in q['options']], float)[:, keep] * sign
     res = {v: {src: nats_core(lines, src, label_fn, mp, fold) for src in SOURCES} for v, mp in (('uncalibrated', identity), ('calibrated', maps))}
     structure_png = plot_label_structure(basis, groups, out)
-    overall_png, overall_table = plot_overall_goodness(lines, basis, maps, identity, fold, out)
+    overall_png, overall_table = plot_pc_scatter(lines, basis, maps, identity, fold, out)
     spider_png, spider_table = plot_style_spider(lines, basis, groups, maps, fold, out)
     dnd_png = plot_dnd_scatter(res, keep, dims, models, out)
     calib_png = calibration_before_after(tables, out)
@@ -788,13 +801,13 @@ def page_random(tables: Path, out: Path, title: str) -> Path:
               'on the same question (+0.1 nats is about 1.1 times DeepSeek\'s odds). <b>Calibrated</b> = each model\'s spread of percentages is first mapped onto DeepSeek\'s (section 5), '
               'so an indecisive model is not read as preferring worse options.</p>',
               takeaways.read_text() if takeaways.exists() else '',
-              '<h2>1. The virtue labels are mostly one scale</h2>', img(structure_png),
-              '<p>Each option has 66 virtue scores. Within a question, an option that scores higher on one virtue almost always scores higher on the others: one axis ("overall goodness") holds about 70% of the variation, '
-              'and all 9 virtue groups are positively correlated. So a model that prefers the good option wins on every group at once. Section 2 shows that overall preference; section 3 removes it to show style.</p>',
-              '<h2>2. Overall goodness (axis 1) against the next trade-off (axis 2)</h2>', img(overall_png),
-              '<p>x = calibrated nats toward the option higher on overall goodness; y = toward the option higher on axis 2, the largest trade-off left after goodness '
-              '(compassion: loving-kindness, benevolence, brotherly love; versus the rationalist virtues: relinquishment, lightness, the void, argument, empiricism). '
-              'Filled dot = calibrated, cross = 95% interval (resampling games/topics, then each model\'s two draws), hollow dot and arrow = uncalibrated to calibrated. Grey box = DeepSeek draw 1 vs draw 2 (swap null): inside it is within DeepSeek\'s own variation. '
+              '<h2>1. What the virtue labels measure: three named components</h2>', img(structure_png),
+              '<p>Principal components of the 66 virtue scores of the options (centred within each question), from the labels only. Bars = mean loading of each virtue group. '
+              'PC1 holds about 70% of the variation and every group loads positively: it is overall goodness, so a model that prefers the good option wins on every virtue at once. '
+              'PC2 and PC3 are the largest trade-offs left; names come from the groups at each end.</p>',
+              '<h2>2. Where each model sits on the components</h2>', img(overall_png),
+              '<p>Calibrated nats vs DeepSeek toward the option higher on each component; left PC1 vs PC2, right PC2 vs PC3. Cross = 95% interval (resampling games/topics, then each model\'s two draws); '
+              'small hollow ring = uncalibrated. Grey box = DeepSeek draw 1 vs draw 2 (swap null): inside it is within DeepSeek\'s own variation. '
               'Most of the interval width comes from differences between games/topics, not draws, so more draws would shrink it only a little; more questions would help.</p>',
               '<details><summary>Numbers, with the chosen-option check</summary>' + overall_table + '</details>',
               '<h2>3. Style: virtue-group preferences once overall goodness is removed</h2>', img(spider_png),
