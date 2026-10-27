@@ -22,6 +22,7 @@ ROOT = Path(__file__).resolve().parents[2]
 SOURCES = {'daily_dilemmas': 'Everyday dilemmas', 'machiavelli': 'Game summaries'}
 UNIT = {'expected': 'Label-score difference vs DeepSeek (probability-weighted)', 'raw': 'Nats per unit of label score, model minus DeepSeek',
         'calibrated': 'Nats per unit of label score, model minus DeepSeek (calibrated)'}
+COMBOS = ((0, 0), (0, 1), (1, 1))  # draw pairs used to resample 2 draws within a question
 COLORS = {'Muse': '#7b3294', 'Qwen': '#c65a00', 'Gemini': '#1b7837', 'Luna': '#007a92', 'DeepSeek self': '#999999'}
 
 
@@ -540,6 +541,104 @@ def calibration_before_after(tables: Path, out: Path) -> Path:
     return path
 
 
+def calibrated_logp(q: dict, model: str, maps: dict, fold: dict, pick: tuple = (0, 1)) -> np.ndarray:
+    # Add-one-smoothed geometric pool over the picked draws, then the split-half quantile map (identity for DeepSeek); same steps as calibration_heldout/run.py.
+    o = list(q['options'])
+    draws = q['models'][model]['draws']
+    lp = np.mean([np.log(np.array([draws[i]['probabilities'][x] for x in o], float) + 1) for i in pick], 0) - np.log(100 + len(o))
+    if 'deepseek' not in model:
+        od = lp[:, None] - lp[None, :]
+        mp = maps[q['source']][model][str(fold[q['source_id']])]
+        v = np.interp(np.abs(od), mp['x'], mp['y'])
+        big = np.abs(od) > mp['x'][-1]
+        v[big] = mp['y'][-1] + (np.abs(od)[big] - mp['x'][-1]) * mp['end_slope']
+        lp = (np.sign(od) * v).mean(1)
+    return lp - np.logaddexp.reduce(lp)
+
+
+def nats_per_label(tables: Path, out: Path) -> tuple[list[Path], str]:
+    # Log-odds shift toward the option with more of a label, model (calibrated) minus DeepSeek, averaged over option pairs weighted by label gap:
+    #   nats = sum_q sum_{i<j} |x_i - x_j| * sign(x_i - x_j) * (delta_i - delta_j) / sum_q sum_{i<j} |x_i - x_j|,  delta = log p_model - log p_DeepSeek.
+    # For a 2-option question this is exactly how many nats more the model's odds favour the higher-label option. Vices flipped (favourable sign); behaviours not.
+    H = tables.parent / 'calibration_heldout'
+    maps = json.loads((H / 'maps.json').read_text())
+    fold = {q['source_id']: 'AB'.index(q['fold']) for q in json.loads((H / 'folds.json').read_text())['questions']}
+    lines = list(map(json.loads, tables.open()))
+    dims = lines[0]['_meta']['dimensions']
+    keep = [i for i, d in enumerate(dims) if d['derived_from'] is None]
+    sign = np.array([-1. if dims[i]['kind'] == 'vices' else 1. for i in keep])
+    ds = 'deepseek/deepseek-v4.1-flash'
+    models = [m for m in lines[1]['models'] if m != ds]
+    cols = models + ['DeepSeek self']
+    figs, rows_html = [], []
+    result = {}
+    for src, name in SOURCES.items():
+        num, num_self, den, groups = [], [], [], []
+        for q in lines[1:]:
+            if q['source'] != src or any(len(q['models'][m]['draws']) < 2 for m in q['models']):
+                continue
+            o = list(q['options'])
+            X = np.array([q['option_scores'][x] for x in o], float)[:, keep] * sign
+            iu = np.triu_indices(len(o), 1)
+            dX = X[iu[0]] - X[iu[1]]  # pairs x dims
+            ok = np.isfinite(dX)
+            w = np.where(ok, np.abs(dX), 0.)
+            sgn = np.where(ok, np.sign(dX), 0.)
+            pair = lambda dl: (w * sgn * (dl[iu[0]] - dl[iu[1]])[:, None]).sum(0)
+            # draw resamples of 2 draws: (0,0), (0,1), (1,1) with probability 1/4, 1/2, 1/4; index [model, model combo, DeepSeek combo]
+            refs = [calibrated_logp(q, ds, maps, fold, c) for c in COMBOS]
+            cal = [[calibrated_logp(q, m, maps, fold, c) for c in COMBOS] for m in models]
+            d0, d1 = [np.log(np.array([dr['probabilities'][x] for x in o], float) + 1) for dr in q['models'][ds]['draws'][:2]]
+            selfn = pair(d0 - d1)  # DeepSeek draw 1 minus draw 2, smoothed, no calibration
+            num.append(np.array([[[pair(cal[j][a] - refs[b]) for b in range(3)] for a in range(3)] for j in range(len(models))]))
+            num_self.append(selfn)
+            den.append(w.sum(0))
+            groups.append(q['eval_cluster'])
+        num, num_self, den = np.array(num), np.array(num_self), np.array(den)  # q x models x 3 x 3 x dims, q x dims, q x dims
+        nq, nm = len(den), len(models)
+        clusters = sorted(set(groups))
+        cl = np.array([clusters.index(g) for g in groups])
+        rng = np.random.default_rng(20261027)
+        boot = np.empty((1000, nm + 1, den.shape[1]))
+        for r in range(1000):
+            wq = np.bincount(rng.integers(0, len(clusters), len(clusters)), minlength=len(clusters))[cl].astype(float)  # games/topics resampled
+            a = rng.choice(3, size=(nq, nm), p=[.25, .5, .25])  # each model's draws resampled within question
+            b = rng.choice(3, size=nq, p=[.25, .5, .25])  # DeepSeek's draws, shared by all models in a question
+            n_models = np.einsum('q,qmd->md', wq, num[np.arange(nq)[:, None], np.arange(nm)[None, :], a, b[:, None]])
+            n_self = np.einsum('q,qd->d', wq * rng.choice([-1., 1.], nq), num_self)  # DeepSeek self: null band from random draw-label swaps
+            with np.errstate(invalid='ignore', divide='ignore'):
+                boot[r] = np.vstack([n_models, n_self]) / (wq @ den)
+        with np.errstate(invalid='ignore', divide='ignore'):
+            point = np.vstack([num[:, :, 1, 1].sum(0), num_self.sum(0)[None]]) / den.sum(0)  # both draws pooled = combo (0, 1)
+        lo, hi = np.nanquantile(boot, .025, 0), np.nanquantile(boot, .975, 0)
+        result[src] = (point, lo, hi, len(num))
+    for fam, title, clip, height in (('virtues', 'virtue (vices flipped: higher = less of the vice)', .4, 17), ('behaviours', 'behaviour (higher = more of the behaviour)', .4, 8), ('dnd', 'D&D axis (order = lawful, morality = good)', .4, 2.2)):
+        ix = [k for k, i in enumerate(keep) if dims[i]['family'] == fam]
+        lab = [re.sub(r'[^\x00-\u024f]', '', dims[keep[k]]['label'] + (' (vice)' if dims[keep[k]]['kind'] == 'vices' else '') + (f" [{dims[keep[k]]['tradition']}]" if dims[keep[k]].get('tradition') else '')).replace(', )', ')') for k in ix]
+        order = np.argsort([np.nanmean([result[s][0][:len(models), k] for s in SOURCES]) for k in ix])
+        fig, axs = plt.subplots(1, 2, figsize=(12, height + 1.5), constrained_layout=True)
+        for ax, (src, sname) in zip(axs, SOURCES.items()):
+            point, lo, hi, n = result[src]
+            M = point[:, ix][:, order].T
+            sig = ((lo > 0) | (hi < 0))[:, ix][:, order].T
+            im = ax.imshow(np.clip(M, -clip, clip), cmap='RdBu', vmin=-clip, vmax=clip, aspect='auto')
+            yy, xx = np.nonzero(sig)
+            ax.plot(xx, yy, 'k.', ms=3)
+            ax.set_xticks(range(len(cols)), [short(m).replace('DeepSeek self', 'DS self') for m in cols], fontsize=8)
+            ax.tick_params(axis='x', top=True, labeltop=True)
+            ax.set_yticks(range(len(ix)), [lab[k] for k in order], fontsize=7)
+            ax.set_title(f'{sname} ({n} questions)', loc='left')
+        fig.colorbar(im, ax=axs, shrink=.6 if fam != 'dnd' else 1, label=f'nats vs DeepSeek (clipped at \u00b1{clip})')
+        fig.suptitle(f'Calibrated log-odds shift toward the option with more of each {title}; dot = 95% interval excludes 0', fontsize=10)
+        path = out / f'nats_{fam}_random_calibrated.png'
+        fig.savefig(path, dpi=110)
+        plt.close(fig)
+        figs.append(path)
+        if fam == 'dnd':
+            rows_html = [[SOURCES[s], short(m), dims[keep[k]]['label'], f"{result[s][0][j, k]:+.3f} ({'swap null ' if m == 'DeepSeek self' else ''}{result[s][1][j, k]:+.3f} to {result[s][2][j, k]:+.3f})"] for s in SOURCES for k in ix for j, m in enumerate(cols)]
+    return figs, tabulate(rows_html, headers=['Source', 'Model', 'D&D axis', 'nats vs DeepSeek (95%)'], tablefmt='html')
+
+
 def page_random(tables: Path, out: Path, title: str) -> Path:
     # Page for a hash-random question set: no selection roles, no calibration, main number = label-score difference vs DeepSeek.
     out.mkdir(parents=True, exist_ok=True)
@@ -550,6 +649,7 @@ def page_random(tables: Path, out: Path, title: str) -> Path:
     cal_png, cal_counts = calibrated_virtues(tables, out)
     beh_png, beh_counts, dnd_table = calibrated_behaviours(tables, out)
     calib_png = calibration_before_after(tables, out)
+    nats_pngs, nats_dnd = nats_per_label(tables, out)
     count_table = tabulate([[src, m, f'{pos}/{n}', f'{neg}/{n}'] for src, m, pos, neg, n in counts],
                            headers=['Source', 'Model', 'Virtues: interval above 0', 'Virtues: interval below 0'], tablefmt='html')
     img = lambda p: f'<img src="{p.name}" alt="{escape(p.stem)}">'
@@ -587,6 +687,13 @@ def page_random(tables: Path, out: Path, title: str) -> Path:
               'Pairs are weighted so each question counts equally, as in the fit; percentages are add-one smoothed and pooled as a geometric mean over the 2 draws. '
               'Overlap on the held-out half shows the decisiveness scale transfers between halves; it does not show the preferences themselves are correct.</p>',
               img(calib_png),
+              '<h2>Nats per label (calibrated)</h2>',
+              '<p>For each label: how many nats more (or less) the model\'s calibrated odds favour the option with more of that label than DeepSeek\'s odds do. '
+              'Computed over all option pairs in a question, each pair weighted by its label gap; for a 2-option question it is exactly the log-odds shift toward the higher-label option. '
+              '+0.3 nats means about 1.35 times DeepSeek\'s odds. Dividing by the absolute label gap (not its variance) keeps rare labels such as killing stable. '
+              'Intervals resample games/topics and then each model\'s and DeepSeek\'s two draws within each question (calibration maps held fixed). '
+              '"DS self" = DeepSeek draw 1 minus draw 2 (uncalibrated, single draws); its band comes from random draw-label swaps, so a dot there means the observed value lies outside what swapping draws gives.</p>',
+              ''.join(img(x) for x in nats_pngs), nats_dnd,
               '<h2>How many virtues differ from DeepSeek?</h2>', count_table,
               '<p>"DeepSeek self" = DeepSeek draw 1 minus draw 2. Intervals: two-level bootstrap, resampling games/topics and then each model\'s draws within each question, so draw noise is included for the models; '
               'no correction for 66 comparisons. With only 2 draws, each DeepSeek-self half is a single draw, so its interval cannot include within-half draw noise: its count is a pessimistic noise check.</p>',
