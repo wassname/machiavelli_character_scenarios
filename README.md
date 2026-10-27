@@ -27,9 +27,9 @@ The 66 virtue labels mostly move together, so the main result is one number, ove
 
 | Overall goodness vs DeepSeek (95% interval) | Game scenes | Everyday dilemmas |
 |:--|--:|--:|
-| Muse Spark 1.3 | −0.01 (−0.08 to +0.05) | −0.14 (−0.23 to −0.04) |
+| Muse Spark 1.3 | −0.01 (−0.07 to +0.06) | −0.14 (−0.23 to −0.04) |
 | GPT-5.6 Luna | −0.12 (−0.19 to −0.04) | +0.05 (−0.05 to +0.15) |
-| Gemini 3.8 Flash | −0.15 (−0.23 to −0.07) | −0.04 (−0.16 to +0.08) |
+| Gemini 3.8 Flash | −0.15 (−0.23 to −0.06) | −0.04 (−0.16 to +0.08) |
 | Qwen 3.8 27B | −0.20 (−0.28 to −0.12) | +0.03 (−0.06 to +0.14) |
 
 In game scenes, Qwen, Gemini and Luna choose less virtuous options than DeepSeek; Muse is about the same. In everyday dilemmas only Muse differs.
