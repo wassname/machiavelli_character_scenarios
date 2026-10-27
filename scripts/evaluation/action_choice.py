@@ -127,6 +127,8 @@ def select_scenes(path: Path, overlay: Path, count: int | None, seed: int, sourc
         if not row["has_virtue_labels"] or (source != "both" and row["source"] != source):
             continue
         row["choice_text"] = json.loads(row["choice_text"])
+        if "user_input" in row["text"] or any("user_input" in c for c in row["choice_text"].values()):  # unfilled player-chosen name in the source game text
+            continue
         if behavior_eligible(row, reviews):
             row["behavior_question_review"] = "reviewed_valid" if row["source_id"] in reviews else "unreviewed"
             candidates.append(row)
