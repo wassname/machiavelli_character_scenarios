@@ -25,14 +25,14 @@ SOURCES = {'daily_dilemmas': 'Everyday dilemmas', 'machiavelli': 'Game scenarios
 UNIT = {'expected': 'Label-score difference vs DeepSeek (probability-weighted)', 'raw': 'Nats per unit of label score, model minus DeepSeek',
         'calibrated': 'Nats per unit of label score, model minus DeepSeek (calibrated)'}
 COMBOS = ((0, 0), (0, 1), (1, 1))  # draw pairs used to resample 2 draws within a question
-COLORS = {'Muse': '#0467DF', 'Qwen': '#6950EF', 'Gemini': '#E37400', 'Luna': '#111111', 'DeepSeek self': '#8a8a8a'}  # near each lab's brand colour, kept distinct
-LOGOS = {'Muse': 'meta', 'Qwen': 'qwen', 'Gemini': 'google', 'Luna': 'openai', 'DeepSeek self': 'deepseek'}  # data/logos/*.png, from wassname.github.io/ml-bench
+COLORS = {'Muse': '#0467DF', 'Qwen': '#6950EF', 'Gemini': '#E37400', 'Luna': '#111111', 'DeepSeek repeat': '#8a8a8a'}  # 'DeepSeek repeat' = DeepSeek answer 1 vs answer 2, shown as 'DeepSeek repeat'  # near each lab's brand colour, kept distinct
+LOGOS = {'Muse': 'meta', 'Qwen': 'qwen', 'Gemini': 'google', 'Luna': 'openai', 'DeepSeek repeat': 'deepseek'}  # data/logos/*.png, from wassname.github.io/ml-bench
 
 
 def short(model: str) -> str:
     for k in COLORS:
         if k.split()[0].lower() in model.lower():
-            return 'DeepSeek self' if 'deepseek' in model.lower() else k
+            return 'DeepSeek repeat' if 'deepseek' in model.lower() else k
     return model
 
 
@@ -92,7 +92,7 @@ def render(scores: Path, scenes_path: Path, out: Path, mode: str, role: str) -> 
         fig.suptitle(f'{family.capitalize()}: which options does each model put more probability on than DeepSeek? ({mode}, {role} questions)', fontsize=12)
         fig.supxlabel('Positive = the model gives more probability than DeepSeek to options scoring higher on this label (vices: more of the named vice). '
                       + ('Lines: 95% two-level bootstrap (games/topics, then draws; includes draw noise). ' if mode == 'expected' else 'Lines: 95% game/topic cluster bootstrap over questions (draw noise not included). ') + 'Arrows: the interval (or the point, drawn at the edge) runs past the axis. '
-                      '"DeepSeek self" = first half of DeepSeek\'s draws minus second half, an empirical noise check.', fontsize=9)
+                      '"DeepSeek repeat" = first half of DeepSeek\'s draws minus second half, an empirical noise check.', fontsize=9)
         path = out / f'{family}_{role}_{mode}.png'
         fig.savefig(path, dpi=120, bbox_inches='tight')
         plt.close(fig)
@@ -129,7 +129,7 @@ def heatmap(scores: Path, out: Path, mode: str, role: str) -> tuple[Path, list[l
     axs[0].set_yticks(range(len(dims)), [f"{d['label']} [{d.get('tradition', '')}]" + (' \u2022 vice' if d['kind'] == 'vices' else '') for d in dims], fontsize=7)
     fig.colorbar(im, ax=axs, shrink=.3, label=f'{UNIT[mode]} (clipped at \u00b1{clip:.2g})')
     fig.suptitle(f'66 virtues, {role} questions ({mode}): blue = model puts more probability than DeepSeek on options scoring higher on this label\n(for rows marked vice: more of the vice)', fontsize=10)
-    fig.supxlabel('Dot = 95% interval excludes 0 (' + ('two-level bootstrap, includes draw noise' if mode == 'expected' else 'game/topic bootstrap, draw noise not included') + '). "DeepSeek self" = first half of DeepSeek draws vs second half, an empirical noise check.', fontsize=8)
+    fig.supxlabel('Dot = 95% interval excludes 0 (' + ('two-level bootstrap, includes draw noise' if mode == 'expected' else 'game/topic bootstrap, draw noise not included') + '). "DeepSeek repeat" = first half of DeepSeek draws vs second half, an empirical noise check.', fontsize=8)
     path = out / f'heatmap_virtues_{role}_{mode}.png'
     fig.savefig(path, dpi=130, bbox_inches='tight')
     plt.close(fig)
@@ -140,7 +140,7 @@ def top_differences(scores: Path, out: Path, mode: str, role: str, k: int = 6) -
     # Readable summary: per model and source, the k virtues most above and most below DeepSeek (by estimate / bootstrap SE).
     rows = [r for r in json.loads(scores.read_text())['rows'] if r['mode'] == mode and r['role'] == role
             and r['dimension']['family'] == 'virtues' and r['dimension'].get('derived_from') is None and r['beta_nats_per_label_unit'] is not None]
-    models = [m for m in COLORS if m != 'DeepSeek self' and any(short(r['model']) == m for r in rows)]
+    models = [m for m in COLORS if m != 'DeepSeek repeat' and any(short(r['model']) == m for r in rows)]
     fig, axs = plt.subplots(len(models), 2, figsize=(13, 3.1 * len(models)), constrained_layout=True)
     for i, m in enumerate(models):
         for j, (src, name) in enumerate(SOURCES.items()):
@@ -211,7 +211,7 @@ def spider(scores: Path, out: Path, mode: str, role: str, shape_only: bool = Fal
                 vals[m] = list(np.array(vals[m]) - np.mean(vals[m]))
         lim = max(abs(v) for vs in vals.values() for v in vs) * 1.1
         for m, v in vals.items():
-            ax.plot(np.r_[angle, angle[0]], np.r_[v, v[:1]], color=COLORS[m], lw=1.6 if m != 'DeepSeek self' else 1, ls='-' if m != 'DeepSeek self' else ':', marker='o', ms=3, label=m)
+            ax.plot(np.r_[angle, angle[0]], np.r_[v, v[:1]], color=COLORS[m], lw=1.6 if m != 'DeepSeek repeat' else 1, ls='-' if m != 'DeepSeek repeat' else ':', marker='o', ms=3, label=m)
         ax.plot(np.linspace(0, 2 * np.pi, 200), np.zeros(200), color='#333333', lw=.8, ls='--')
         ax.set_ylim(-lim, lim)
         ax.set_theta_offset(np.pi / 2)
@@ -254,7 +254,7 @@ def expected_rows(question_tables: Path, out: Path, replicates: int = 300) -> Pa
     dims = lines[0]['_meta']['dimensions']
     qs = lines[1:]
     ds = 'deepseek/deepseek-v4.1-flash'
-    models = [m for m in qs[0]['models'] if m != ds] + ['DeepSeek self']
+    models = [m for m in qs[0]['models'] if m != ds] + ['DeepSeek repeat']
     rows = []
     for src in SOURCES:
         for role in sorted({q['role'] for q in qs}):
@@ -297,7 +297,7 @@ def expected_rows(question_tables: Path, out: Path, replicates: int = 300) -> Pa
                 lo, hi = np.quantile(b, [.025, .975], axis=0)
                 for mi, m in enumerate(models):
                     for j, k in enumerate(ix):
-                        rows.append({'model': 'deepseek self' if m == 'DeepSeek self' else m, 'mode': 'expected', 'role': role, 'source': src, 'dimension': dims[k],
+                        rows.append({'model': 'deepseek self' if m == 'DeepSeek repeat' else m, 'mode': 'expected', 'role': role, 'source': src, 'dimension': dims[k],
                                      'beta_nats_per_label_unit': float(v[:, mi, j].mean()), 'ci95': [float(lo[mi, j]), float(hi[mi, j])],
                                      'bootstrap_se': float(b[:, mi, j].std(ddof=1)), 'informative_questions': len(vals), 'clusters': len(set(groups))})
     path = out / 'expected_label_scores.json'
@@ -337,7 +337,7 @@ def page(scoring: Path, out: Path) -> Path:
               'probability away from whatever DeepSeek favours. Calibrating each model\'s confidence scale failed checks (it biased DeepSeek against itself on control questions), '
               'so no calibration is applied. The nats-slope views lower down have the same problem plus large intervals for rare labels.</p>',
               '<h2>How many virtues differ from DeepSeek? (dev questions)</h2>', count_table(('expected', 'dev')),
-              '<p>"DeepSeek self" compares DeepSeek\'s draws 1-2 with draws 3-4. Draw-to-draw noise is not in the intervals, and the 66 virtue labels move together, so one shared '
+              '<p>"DeepSeek repeat" compares DeepSeek\'s draws 1-2 with draws 3-4. Draw-to-draw noise is not in the intervals, and the 66 virtue labels move together, so one shared '
               'fluctuation can push several past zero; use its count as the noise level.</p>',
               '<h2>Did choosing uncertain questions help?</h2>', noise_table,
               '<p>Variance of the four models\' mean log-probabilities divided by their draw-to-draw variance, pooled over questions. Dev is not higher than control, so choosing '
@@ -498,7 +498,7 @@ def load_calibration(tables: Path) -> tuple[list[dict], dict, dict, dict]:
 
 
 def fmt(point: float, lo: float, hi: float, null: bool = False) -> str:
-    return f"{point:+.3f} ({'swap null ' if null else ''}{lo:+.3f} to {hi:+.3f})"
+    return f"{point:+.3f} ({'run-to-run range ' if null else ''}{lo:+.3f} to {hi:+.3f})"
 
 
 def chosen_option_level(lines: list[dict], src: str, value_fn) -> tuple:
@@ -540,7 +540,7 @@ def nats_per_label(tables: Path, out: Path) -> tuple[list[Path], str]:
     label_fn = lambda q: np.array([q['option_scores'][x] for x in q['options']], float)[:, keep] * sign
     res = {v: {src: nats_core(lines, src, label_fn, mp, fold) for src in SOURCES} for v, mp in (('uncalibrated', identity), ('calibrated', maps))}
     cols = [('uncalibrated', j) for j in range(len(models))] + [('calibrated', j) for j in range(len(models) + 1)]  # DeepSeek self once, at the end
-    names = [short(models[j]) if j < len(models) else 'DS self' for v, j in cols]
+    names = [short(models[j]) if j < len(models) else 'DS repeat' for v, j in cols]
     figs, dnd_rows = [], []
     for fam, title, clip, height in (('virtues', 'virtue (vices flipped: blue = more virtuous, less of a vice)', .4, 17), ('behaviours', 'behaviour (blue = more of the behaviour, not always better)', .4, 8), ('dnd', 'D&D axis (order = lawful, morality = good)', .4, 2.4)):
         ix = [k for k, i in enumerate(keep) if dims[i]['family'] == fam]
@@ -563,7 +563,7 @@ def nats_per_label(tables: Path, out: Path) -> tuple[list[Path], str]:
             ax.set_yticks(range(len(ix)), [f'{lab[k]} (n={inf[ix[k]]})' for k in order], fontsize=7)
             ax.set_title(f"{sname} ({res['calibrated'][src][3]} questions; n = questions where the label differs)", loc='left', fontsize=10, pad=48)
         fig.colorbar(im, ax=axs, shrink=.6 if fam != 'dnd' else 1, label=f'nats vs DeepSeek (clipped at \u00b1{clip})')
-        fig.suptitle(f'Log-odds shift vs DeepSeek toward the option with more of each {title}; dot = 95% interval excludes 0 (DS self: outside swap band)', fontsize=10)
+        fig.suptitle(f'Log-odds shift vs DeepSeek toward the option with more of each {title}; dot = 95% interval excludes 0 (DS repeat: outside DeepSeek\u2019s run-to-run range)', fontsize=10)
         path = out / f'nats_{fam}_random.png'
         fig.savefig(path, dpi=110)
         plt.close(fig)
@@ -571,7 +571,7 @@ def nats_per_label(tables: Path, out: Path) -> tuple[list[Path], str]:
         if fam == 'dnd':
             for s in SOURCES:
                 for k in ix:
-                    for j, m in enumerate(models + ['DeepSeek self']):
+                    for j, m in enumerate(models + ['DeepSeek repeat']):
                         r_raw, r_cal = res['uncalibrated'][s], res['calibrated'][s]
                         dnd_rows.append([SOURCES[s], short(m), dims[keep[k]]['label'], r_cal[4][k], fmt(r_raw[0][j, k], r_raw[1][j, k], r_raw[2][j, k], j == len(models)),
                                          '' if j == len(models) else fmt(r_cal[0][j, k], r_cal[1][j, k], r_cal[2][j, k])])
@@ -650,7 +650,7 @@ def plot_pc_scatter(lines: list[dict], basis: dict, maps: dict, identity: dict, 
             ax = axs[r, c]
             j = len(models)
             ax.add_patch(plt.Rectangle((cal[1][j, kx], cal[1][j, ky]), cal[2][j, kx] - cal[1][j, kx], cal[2][j, ky] - cal[1][j, ky], color='#eeeeee', zorder=0))
-            logo(ax, cal[0][j, kx], cal[0][j, ky], 'DeepSeek self', .14)
+            logo(ax, cal[0][j, kx], cal[0][j, ky], 'DeepSeek repeat', .14)
             for j, m in enumerate(models):
                 n = short(m)
                 x, y = cal[0][j, kx], cal[0][j, ky]
@@ -666,8 +666,8 @@ def plot_pc_scatter(lines: list[dict], basis: dict, maps: dict, identity: dict, 
             ax.set_title(sname, loc='left', fontsize=10)
             for sp in ('top', 'right'):
                 ax.spines[sp].set_visible(False)
-        for j, m in enumerate(models + ['DeepSeek self']):
-            self_ = m == 'DeepSeek self'
+        for j, m in enumerate(models + ['DeepSeek repeat']):
+            self_ = m == 'DeepSeek repeat'
             rows.append([sname, short(m)] + [fmt(cal[0][j, k], cal[1][j, k], cal[2][j, k], self_) for k in range(3)]
                         + [fmt(raw[0][j, 0], raw[1][j, 0], raw[2][j, 0], self_), '' if self_ else fmt(top[0][j], top[1][j], top[2][j]), cal[3]])
     path = out / 'pc_scatter.png'
@@ -696,8 +696,8 @@ def plot_style_spider(lines: list[dict], basis: dict, groups: dict, maps: dict, 
         point, lo, hi, n, _ = nats_core(lines, src, resid, maps, fold)
         lim = 1.15 * np.nanmax(np.abs(point))
         ax.fill_between(np.linspace(0, 2 * np.pi, 200), -lim, 0, color='#f4f4f4', zorder=0)
-        for j, m in enumerate(models + ['DeepSeek self']):
-            self_ = m == 'DeepSeek self'
+        for j, m in enumerate(models + ['DeepSeek repeat']):
+            self_ = m == 'DeepSeek repeat'
             col = COLORS[short(m)]
             v = point[j]
             ax.plot(np.r_[angle, angle[0]], np.r_[v, v[:1]], color=col, lw=1 if self_ else 1.8, ls=':' if self_ else '-', label=short(m))
@@ -735,7 +735,7 @@ def plot_dnd_scatter(res: dict, keep: list, dims: list, models: list, out: Path)
             ax.errorbar(x, y, xerr=[[x - lo[j, k_order]], [hi[j, k_order] - x]], yerr=[[y - lo[j, k_good]], [hi[j, k_good] - y]], fmt='none', ecolor=col, lw=1.2, capsize=3)
             logo(ax, x, y, short(m))
             ax.annotate(short(m), (x, y), xytext=(12, 10), textcoords='offset points', color=col, fontsize=9, weight='bold')
-        logo(ax, point[-1, k_order], point[-1, k_good], 'DeepSeek self', .14)
+        logo(ax, point[-1, k_order], point[-1, k_good], 'DeepSeek repeat', .14)
         ax.axhline(0, color='#888888', lw=.8)
         ax.axvline(0, color='#888888', lw=.8)
         ax.set_title(f'{name} (lawful: {inf[k_order]} questions, good: {inf[k_good]})', loc='left', fontsize=10)
@@ -809,15 +809,15 @@ def page_random(tables: Path, out: Path, title: str) -> Path:
               'PC2 and PC3 are the largest trade-offs left; names come from the groups at each end.</p>',
               '<h2>2. Where each model sits on the components</h2>', img(overall_png),
               '<p>Calibrated nats vs DeepSeek toward the option higher on each component; left PC1 vs PC2, right PC2 vs PC3. Cross = 95% interval (resampling games/topics, then each model\'s two draws); '
-              'small hollow ring = uncalibrated. Grey box = DeepSeek draw 1 vs draw 2 (swap null): inside it is within DeepSeek\'s own variation. '
+              'small hollow ring = uncalibrated. DeepSeek repeat = how far DeepSeek\'s two answers to the same questions differ from each other; the grey box is the 95% range of that difference when the two answers are shuffled at random, i.e. DeepSeek\'s own run-to-run variation. A model inside the grey box is no further from DeepSeek than DeepSeek is from itself. '
               'Most of the interval width comes from differences between games/topics, not draws, so more draws would shrink it only a little; more questions would help.</p>',
               '<details><summary>Numbers, with the chosen-option check</summary>' + overall_table + '</details>',
               '<h2>3. Style: virtue-group preferences once overall goodness is removed</h2>', img(spider_png),
               '<p>Each option\'s 66 virtue scores minus their overall-goodness part (projection on axis 1), averaged within each group. A spoke outside the dashed ring = the model favours options with more of that group '
-              '<i>than their overall goodness would predict</i>, more than DeepSeek does. Filled dot = 95% interval excludes 0 (for DeepSeek self: outside its swap band); hollow = not distinguishable from DeepSeek.</p>',
+              '<i>than their overall goodness would predict</i>, more than DeepSeek does. Filled dot = 95% interval excludes 0 (for the DeepSeek repeat: outside DeepSeek\'s run-to-run range); hollow = not distinguishable from DeepSeek.</p>',
               '<details><summary>Numbers</summary>' + spider_table + '</details>',
               '<h2>4. D&D alignment</h2>', img(dnd_png),
-              '<p>Calibrated nats toward the more lawful (x) and more good (y) option, from the source D&D labels. Crosses = 95% intervals; grey box = DeepSeek self swap band.</p>',
+              '<p>Calibrated nats toward the more lawful (x) and more good (y) option, from the source D&D labels. Crosses = 95% intervals. DeepSeek repeat = how far DeepSeek\'s two answers to the same questions differ from each other; the grey box is the 95% range of that difference when the two answers are shuffled at random, i.e. DeepSeek\'s own run-to-run variation. A model inside the grey box is no further from DeepSeek than DeepSeek is from itself.</p>',
               '<h2>5. Calibration: decisiveness before and after</h2>', img(calib_png),
               '<p>Each curve: how far apart a model\'s stated percentages for two options of a question are (absolute log-odds, each question weighted equally). Left of DeepSeek (black) = spreads its percentages more evenly. '
               'Calibration maps each model onto DeepSeek\'s curve using quantiles fitted on the other half of the questions; option order within a question never changes. '
@@ -827,7 +827,7 @@ def page_random(tables: Path, out: Path, title: str) -> Path:
               'n = questions where the label differs between options.</p>' + ''.join(img(x) for x in grid_pngs) + dnd_table + '</details>',
               '<details><summary>Known limits</summary><ul>'
               '<li>DeepSeek favours the option shown second; models and DeepSeek see the same two orders, so this should largely cancel in comparisons (not tested order by order). '
-              'On everyday questions DeepSeek self sits just outside its swap band on overall goodness (+0.13 nats); read everyday differences of about that size with caution.</li>'
+              'On everyday questions DeepSeek\'s two answers differ by +0.13 nats on overall goodness, just outside its run-to-run range; read everyday differences of about that size with caution.</li>'
               '<li>Calibration halves share games/topics: no test on unseen games. Maps are held fixed in the intervals.</li>'
               '<li>Muse and Luna return only reasoning summaries.</li></ul></details>',
               '<details><summary>The exact prompt (one game request as sent; option order rotates between draws)</summary>' + prompt_html + '</details>',
