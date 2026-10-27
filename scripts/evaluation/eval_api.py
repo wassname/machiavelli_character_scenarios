@@ -201,7 +201,7 @@ async def run_requests(packets: list[dict], out: Path, *, max_new_usd: float, co
                             logger.debug("## First complete request/reply\n\n```json\n" + json.dumps(record, ensure_ascii=False, indent=2) + "\n```\n")
                         if counts["completed"] % 100 == 0:
                             logger.info(f"Completed {counts['completed']}/{len(packets)} requests; new cost ${new:.5f}; cumulative ${project_before + new:.5f}.")
-            workers_per_model = max(1, concurrency // len(work))
+            workers_per_model = max(1, concurrency // max(1, len(work)))  # empty stage (all requests done in smoke): no workers
             tasks = [asyncio.create_task(worker(model_work)) for model_work in work.values() for _ in range(workers_per_model)]
             try:
                 await asyncio.gather(*tasks)
