@@ -678,7 +678,7 @@ def page_random(tables: Path, out: Path, title: str) -> Path:
               img(calib_png),
               '<h2>3. Virtue axes</h2>',
               '<p>The 66 virtue labels are nearly one scale on these options: every pair of virtues is positively correlated (mean 0.6) and the first axis holds about 70% of the label variation, '
-              'so a model that prefers the "good" option wins on every virtue at once and every virtue group shows the same model order. The axes separate that shared direction from the two largest trade-offs left after it. '
+              'so a model that prefers the "good" option tends to win on most virtues at once, and most virtue groups show the same model order. The axes separate that shared direction from the two largest trade-offs left after it. '
               'Axes come from the label scores only (no model data), separately per source.</p>',
               img(axes_png), '<details><summary>Axis poles and numbers</summary>' + axes_table + '</details>',
               '<h2>4. Every label: uncalibrated vs calibrated</h2>',
@@ -687,8 +687,8 @@ def page_random(tables: Path, out: Path, title: str) -> Path:
               ''.join(img(x) for x in nats_pngs), nats_dnd,
               '<h2>Known limits</h2><ul>'
               '<li>DeepSeek favours the option shown second: on everyday questions where draw 1 showed the less virtuous option first, draw 1 was more virtuous (+0.017 virtue level) and vice versa (-0.006). '
-              'Models and DeepSeek see the same two orders, so this cancels in model comparisons, but it adds noise to the "DeepSeek self" check. '
-              'On everyday questions DeepSeek self still sits just outside its swap band on overall goodness (about +0.1 nats), so treat everyday differences below about 0.1 nats as noise.</li>'
+              'Models and DeepSeek see the same two orders, so this should largely cancel in model comparisons (not tested order by order), but it adds noise to the "DeepSeek self" check. '
+              'On everyday questions DeepSeek self still sits just outside its swap band on overall goodness (+0.13 nats); read everyday differences of about that size with caution.</li>'
               '<li>Halves for calibration share games/topics: no test on unseen games. Maps are held fixed in the intervals.</li>'
               '<li>Muse and Luna return only reasoning summaries, so their motives cannot be checked from full reasoning.</li></ul>',
               '<h2>Example questions (hash-chosen, not typical or best)</h2>', ''.join(ex),
