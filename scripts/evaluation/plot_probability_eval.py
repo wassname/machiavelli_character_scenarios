@@ -865,7 +865,8 @@ def page_random(tables: Path, out: Path, title: str) -> Path:
               f'<li>Option order: on two-option questions the option shown second gets on average {position_note}. Every model sees the same two orders, so an order preference should largely cancel in comparisons (not tested order by order).</li>'
               '<li>Intervals hold the calibration maps fixed; labels are automated; filled dots are not adjusted for testing many labels. The "DeepSeek repeat" rows show DeepSeek\'s own run-to-run variation.</li>'
               + ('<li>Game questions that contain the unfilled placeholder <code>user_input</code> (any capitalisation) where the game expected a player-chosen name (flagged by Qwen and Gemini in their setup notes); they are left out of every figure.</li>'
-                 if len(lines) < len(list(tables.open())) else '<li>The game placeholder <code>user_input</code> (a player-chosen name) is shown to models as "[chosen name]".</li>') +
+                 if len(lines) < len(list(tables.open())) else '<li>The game placeholder <code>user_input</code> (a player-chosen name) is shown to models as "[chosen name]", with a line saying the game text does not give the name'
+                 + (f" ({len(lines[0]['_meta']['repaired_questions'])} questions re-asked with that line)" if lines[0]['_meta'].get('repaired_questions') else '') + '.</li>') +
               '<li>Calibration halves share games/topics: no test on unseen games. Maps are held fixed in the intervals.</li>'
               '<li>Muse and Luna return only reasoning summaries.</li></ul></details>',
               '<details><summary>The exact prompt (one game request as sent; option order rotates between draws)</summary>' + prompt_html + '</details>',
