@@ -495,7 +495,7 @@ def calibration_before_after(tables: Path, out: Path) -> Path:
     ds = 'deepseek/deepseek-v4.1-flash'
     fig, axs = plt.subplots(2, 2, figsize=(12, 8), sharex=True, sharey=True, constrained_layout=True)
     for row, (src, name) in enumerate(SOURCES.items()):
-        mags = defaultdict(lambda: ([], []))
+        mags = defaultdict(lambda: ([], [], []))  # raw, calibrated, weight (1/pairs, equal weight per question as in the fit)
         for q in qs:
             if q['source'] != src:
                 continue
@@ -518,16 +518,18 @@ def calibration_before_after(tables: Path, out: Path) -> Path:
                     cal = np.abs((z[:, None] - z[None, :])[iu])
                 mags[m][0].extend(raw)
                 mags[m][1].extend(cal)
-        for col, title in enumerate(('raw (stated %, pooled over 2 draws)', 'calibrated (map fitted on the other half)')):
+                mags[m][2].extend([1 / len(raw)] * len(raw))
+        for col, title in enumerate(('uncalibrated', 'calibrated (map from other half)')):
             ax = axs[row, col]
             for m, vals in mags.items():
-                x = np.sort(vals[col])
+                ix = np.argsort(vals[col])
+                x, w = np.array(vals[col])[ix], np.array(vals[2])[ix]
                 c = 'black' if m == ds else COLORS[short(m)]
-                ax.plot(x, np.arange(1, len(x) + 1) / len(x), color=c, lw=2.2 if m == ds else 1.4, label='DeepSeek (reference)' if m == ds else short(m))
+                ax.plot(x, np.cumsum(w) / w.sum(), color=c, lw=2.2 if m == ds else 1.4, label='DeepSeek (reference)' if m == ds else short(m))
             ax.set_title(f'{name}: {title}', loc='left', fontsize=10)
             ax.set_xlim(0, 5)
             ax.grid(alpha=.3)
-        axs[row, 0].set_ylabel('fraction of option pairs')
+        axs[row, 0].set_ylabel('share of option pairs')
     for ax in axs[1]:
         ax.set_xlabel('|log-odds| between two options of a question (nats; 0 = 50/50, 4.6 = 99/1)')
     axs[0, 0].legend(fontsize=9, loc='lower right')
@@ -581,7 +583,9 @@ def page_random(tables: Path, out: Path, title: str) -> Path:
               '<h2>Calibration: decisiveness before and after</h2>',
               '<p>Each curve shows, for one model, how far apart its stated percentages for two options of the same question are (all option pairs, absolute log-odds). '
               'A curve to the left of DeepSeek (black) means the model spreads its percentages more evenly. Calibration maps each model onto DeepSeek\'s curve using the p05-p95 quantiles '
-              'fitted on the other half of the questions, so after calibration the curves should lie close to black; order of options within a question never changes.</p>',
+              'fitted on the other half of the questions, so after calibration the curves should lie close to black; order of options within a question never changes. '
+              'Pairs are weighted so each question counts equally, as in the fit; percentages are add-one smoothed and pooled as a geometric mean over the 2 draws. '
+              'Overlap on the held-out half shows the decisiveness scale transfers between halves; it does not show the preferences themselves are correct.</p>',
               img(calib_png),
               '<h2>How many virtues differ from DeepSeek?</h2>', count_table,
               '<p>"DeepSeek self" = DeepSeek draw 1 minus draw 2. Intervals: two-level bootstrap, resampling games/topics and then each model\'s draws within each question, so draw noise is included for the models; '
