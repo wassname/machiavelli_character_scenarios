@@ -495,8 +495,9 @@ def load_calibration(tables: Path) -> tuple[list[dict], dict, dict, dict]:
     fold = {q['source_id']: 'AB'.index(q['fold']) for q in json.loads((H / 'folds.json').read_text())['questions']}
     identity = {s: {m: {k: {'x': [0., 10.], 'y': [0., 10.], 'end_slope': 1.} for k in ('0', '1')} for m in v} for s, v in maps.items()}
     lines = list(map(json.loads, tables.open()))
-    # Drop questions with the unfilled player-name placeholder 'user_input' (8 of 1,000 in the random run); maps were fitted with them in.
-    keep = [lines[0]] + [q for q in lines[1:] if 'user_input' not in (q['text'] + json.dumps(q['options'])).lower()]
+    # Runs sent before the placeholder fix showed models the raw 'user_input' name (21 of 1,000 in the v6 random run): drop those questions; maps were fitted with them in.
+    unfilled = 'user_input' in (ROOT / lines[0]['_meta']['run'] / 'packets.jsonl').read_text().lower()
+    keep = [lines[0]] + [q for q in lines[1:] if not (unfilled and 'user_input' in (q['text'] + json.dumps(q['options'])).lower())]
     return keep, maps, identity, fold
 
 
@@ -801,8 +802,8 @@ def page_random(tables: Path, out: Path, title: str) -> Path:
     takeaways = tables.parent / 'takeaways.html'  # hand-written summary of this run, kept next to its data
     blocks = [f'<h1>{escape(title)}</h1>',
               '<p>Five models stated a percentage for every option of 1,000 hash-random questions, 2 draws each: 500 <b>everyday dilemmas</b> (DailyDilemmas) and 500 <b>game scenarios</b> '
-              '(decision points from the MACHIAVELLI choose-your-own-adventure text games, with the story so far summarised into the current scene; the model is placed in the character\'s position). '
-              'first-person "you are now in this person\'s place" prompt. <b>Unit: nats vs DeepSeek</b> = how much more (or less) the model\'s odds favour the option with more of a label than DeepSeek\'s odds do, '
+              '(decision points from the MACHIAVELLI choose-your-own-adventure text games, with the story so far summarised into the current scene). '
+              f'Prompt <code>{escape(packet["metadata"]["actor_prompt_protocol"])}</code>: the model is placed in the person\'s position but chooses with its own values (full text under Details). <b>Unit: nats vs DeepSeek</b> = how much more (or less) the model\'s odds favour the option with more of a label than DeepSeek\'s odds do, '
               'on the same question (+0.1 nats is about 1.1 times DeepSeek\'s odds). <b>Calibrated</b> = each model\'s spread of percentages is first mapped onto DeepSeek\'s (section 5), '
               'so an indecisive model is not read as preferring worse options.</p>',
               takeaways.read_text() if takeaways.exists() else '',
@@ -831,7 +832,8 @@ def page_random(tables: Path, out: Path, title: str) -> Path:
               '<details><summary>Known limits</summary><ul>'
               '<li>DeepSeek favours the option shown second; models and DeepSeek see the same two orders, so this should largely cancel in comparisons (not tested order by order). '
               'On everyday questions DeepSeek\'s two answers differ by +0.13 nats on overall goodness, just outside its run-to-run range; read everyday differences of about that size with caution.</li>'
-              '<li>Game questions that contain the unfilled placeholder <code>user_input</code> (any capitalisation) where the game expected a player-chosen name (flagged by Qwen and Gemini in their setup notes); they are left out of every figure. Selection now excludes such questions.</li>'
+              + ('<li>Game questions that contain the unfilled placeholder <code>user_input</code> (any capitalisation) where the game expected a player-chosen name (flagged by Qwen and Gemini in their setup notes); they are left out of every figure.</li>'
+                 if len(lines) < len(list(tables.open())) else '<li>The game placeholder <code>user_input</code> (a player-chosen name) is shown to models as "[chosen name]".</li>') +
               '<li>Calibration halves share games/topics: no test on unseen games. Maps are held fixed in the intervals.</li>'
               '<li>Muse and Luna return only reasoning summaries.</li></ul></details>',
               '<details><summary>The exact prompt (one game request as sent; option order rotates between draws)</summary>' + prompt_html + '</details>',
