@@ -473,8 +473,9 @@ def nats_core(lines: list[dict], src: str, label_fn, maps: dict, fold: dict, res
     rng = np.random.default_rng(20261027)
     boot = np.empty((1000, nm + 1, den.shape[1]))
     for r in range(1000):
-        # resample: 'both' (games/topics, then draws), or 'clusters' / 'draws' alone to see which source of noise dominates
-        qi = np.concatenate([members[c] for c in rng.integers(0, len(clusters), len(clusters))]) if resample != 'draws' else np.arange(nq)  # each copy gets fresh draws below
+        # resample: 'both' (games/topics, then draws); 'questions' (questions, then draws: inference for new questions from the same games/topics); 'clusters' / 'draws' alone for diagnosis
+        qi = (np.arange(nq) if resample == 'draws' else rng.integers(0, nq, nq) if resample == 'questions'
+              else np.concatenate([members[c] for c in rng.integers(0, len(clusters), len(clusters))]))  # each copy gets fresh draws below
         a = rng.choice(3, size=(len(qi), nm), p=[.25, .5, .25]) if resample != 'clusters' else np.ones((len(qi), nm), int)  # each model's 2 draws, with replacement
         b = rng.choice(3, size=len(qi), p=[.25, .5, .25]) if resample != 'clusters' else np.ones(len(qi), int)  # DeepSeek's draws, shared by all models
         n_models = num[qi[:, None], np.arange(nm)[None, :], a, b[:, None]].sum(0)
