@@ -486,6 +486,58 @@ def calibrated_behaviours(tables: Path, out: Path) -> tuple[Path, str, str]:
     return path, counts, tabulate(dnd, headers=['Source', 'Model', 'D&D axis', 'View', 'Difference vs DeepSeek (95%)', 'Questions'], tablefmt='html')
 
 
+def calibration_before_after(tables: Path, out: Path) -> Path:
+    # ECDF of pairwise |log-odds| per model, raw vs split-half calibrated (test-fold maps from calibration_heldout); DeepSeek in black.
+    H = tables.parent / 'calibration_heldout'
+    maps = json.loads((H / 'maps.json').read_text())
+    fold = {q['source_id']: 'AB'.index(q['fold']) for q in json.loads((H / 'folds.json').read_text())['questions']}
+    qs = list(map(json.loads, tables.open()))[1:]
+    ds = 'deepseek/deepseek-v4.1-flash'
+    fig, axs = plt.subplots(2, 2, figsize=(12, 8), sharex=True, sharey=True, constrained_layout=True)
+    for row, (src, name) in enumerate(SOURCES.items()):
+        mags = defaultdict(lambda: ([], []))
+        for q in qs:
+            if q['source'] != src:
+                continue
+            o = list(q['options'])
+            for m, d in q['models'].items():
+                if len(d['draws']) < 2:  # calibration uses complete 2-draw questions only
+                    continue
+                lp = np.mean([np.log(np.array([dr['probabilities'][x] for x in o], float) + 1) for dr in d['draws']], 0) - np.log(100 + len(o))
+                od = lp[:, None] - lp[None, :]
+                iu = np.triu_indices(len(o), 1)
+                raw = np.abs(od[iu])
+                if m == ds:
+                    cal = raw
+                else:
+                    mp = maps[src][m][str(fold[q['source_id']])]
+                    v = np.interp(np.abs(od), mp['x'], mp['y'])
+                    big = np.abs(od) > mp['x'][-1]
+                    v[big] = mp['y'][-1] + (np.abs(od)[big] - mp['x'][-1]) * mp['end_slope']
+                    z = (np.sign(od) * v).mean(1)
+                    cal = np.abs((z[:, None] - z[None, :])[iu])
+                mags[m][0].extend(raw)
+                mags[m][1].extend(cal)
+        for col, title in enumerate(('raw (stated %, pooled over 2 draws)', 'calibrated (map fitted on the other half)')):
+            ax = axs[row, col]
+            for m, vals in mags.items():
+                x = np.sort(vals[col])
+                c = 'black' if m == ds else COLORS[short(m)]
+                ax.plot(x, np.arange(1, len(x) + 1) / len(x), color=c, lw=2.2 if m == ds else 1.4, label='DeepSeek (reference)' if m == ds else short(m))
+            ax.set_title(f'{name}: {title}', loc='left', fontsize=10)
+            ax.set_xlim(0, 5)
+            ax.grid(alpha=.3)
+        axs[row, 0].set_ylabel('fraction of option pairs')
+    for ax in axs[1]:
+        ax.set_xlabel('|log-odds| between two options of a question (nats; 0 = 50/50, 4.6 = 99/1)')
+    axs[0, 0].legend(fontsize=9, loc='lower right')
+    fig.suptitle('How decisive each model is, before and after calibration (curve left of black = less decisive than DeepSeek)', fontsize=11)
+    path = out / 'calibration_before_after.png'
+    fig.savefig(path, dpi=110)
+    plt.close(fig)
+    return path
+
+
 def page_random(tables: Path, out: Path, title: str) -> Path:
     # Page for a hash-random question set: no selection roles, no calibration, main number = label-score difference vs DeepSeek.
     out.mkdir(parents=True, exist_ok=True)
@@ -495,6 +547,7 @@ def page_random(tables: Path, out: Path, title: str) -> Path:
     h, counts = heatmap(expected, out, 'expected', role)
     cal_png, cal_counts = calibrated_virtues(tables, out)
     beh_png, beh_counts, dnd_table = calibrated_behaviours(tables, out)
+    calib_png = calibration_before_after(tables, out)
     count_table = tabulate([[src, m, f'{pos}/{n}', f'{neg}/{n}'] for src, m, pos, neg, n in counts],
                            headers=['Source', 'Model', 'Virtues: interval above 0', 'Virtues: interval below 0'], tablefmt='html')
     img = lambda p: f'<img src="{p.name}" alt="{escape(p.stem)}">'
@@ -525,6 +578,11 @@ def page_random(tables: Path, out: Path, title: str) -> Path:
               'Its DeepSeek-self check is draw 1 vs draw 2 after calibration, with an interval from swapping draw labels and refitting. '
               'Calibration keeps each model\'s option order, so it cannot remove a difference in which option a model ranks first (e.g. Qwen on games). '
               'It can also shrink real differences in how strongly a model prefers an option, so a calibrated value near 0 is not proof of no difference.</p>',
+              '<h2>Calibration: decisiveness before and after</h2>',
+              '<p>Each curve shows, for one model, how far apart its stated percentages for two options of the same question are (all option pairs, absolute log-odds). '
+              'A curve to the left of DeepSeek (black) means the model spreads its percentages more evenly. Calibration maps each model onto DeepSeek\'s curve using the p05-p95 quantiles '
+              'fitted on the other half of the questions, so after calibration the curves should lie close to black; order of options within a question never changes.</p>',
+              img(calib_png),
               '<h2>How many virtues differ from DeepSeek?</h2>', count_table,
               '<p>"DeepSeek self" = DeepSeek draw 1 minus draw 2. Intervals: two-level bootstrap, resampling games/topics and then each model\'s draws within each question, so draw noise is included for the models; '
               'no correction for 66 comparisons. With only 2 draws, each DeepSeek-self half is a single draw, so its interval cannot include within-half draw noise: its count is a pessimistic noise check.</p>',
