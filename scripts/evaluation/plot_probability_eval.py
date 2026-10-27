@@ -371,7 +371,7 @@ def page(scoring: Path, out: Path) -> Path:
 
 
 def calibration_before_after(tables: Path, out: Path) -> Path:
-    # ECDF of pairwise |log-odds| per model, raw vs split-half calibrated (test-fold maps from calibration_heldout); DeepSeek in black.
+    # ECDF of pairwise |log-odds| per model, raw vs split-half calibrated (test-fold maps from calibration_heldout); DeepSeek in grey.
     H = tables.parent / 'calibration_heldout'
     maps = json.loads((H / 'maps.json').read_text())
     fold = {q['source_id']: 'AB'.index(q['fold']) for q in json.loads((H / 'folds.json').read_text())['questions']}
@@ -808,7 +808,7 @@ def page_random(tables: Path, out: Path, title: str) -> Path:
     for q in chosen:
         ms = q['models']
         cell = lambda v: f'<span style="display:block;padding:2px 6px;background:rgba(33,102,172,{v / 100:.2f});color:{"white" if v > 55 else "black"}">{v:.0f}%</span>'
-        table = [[o, escape(t[:120])] + [cell(ms[m]['mean_stated_percent'][o]) for m in ms] for o, t in q['options'].items()]
+        table = [[o, escape(t)] + [cell(ms[m]['mean_stated_percent'][o]) for m in ms] for o, t in q['options'].items()]
         replies = ''
         for m, v in ms.items():
             d = v['draws'][0]
@@ -819,7 +819,7 @@ def page_random(tables: Path, out: Path, title: str) -> Path:
             replies += (f"<details><summary>{name}: stated reason (draw {d['draw'] + 1}), top option (table id) {max(d['probabilities'], key=d['probabilities'].get)}</summary>"
                         f"<pre>{escape(order_note + d['reasoning'])}\n\nSetup note (optional, may be empty): {escape(d['setup_note'] or '(empty)')}</pre></details>"
                         f"<details><summary>{name}: hidden reasoning ({'summary only' if m.split('/')[0] in ('meta', 'openai') else 'full text'}, {len(h)} characters)</summary><pre>{escape(h or '(none returned)')}</pre></details>")
-        ex.append(f"<h4>{escape(q['source_id'])}</h4><pre>{escape(q['text'][-900:])}</pre>"
+        ex.append(f"<h4>{escape(q['source_id'])}</h4><pre>{escape(q['text'])}</pre>"
                   + tabulate(table, headers=['id', 'option'] + [short(m) if 'deepseek' not in m else 'DeepSeek' for m in ms], tablefmt='unsafehtml') + replies)
     packet = next(json.loads(x) for x in (tables.parent / 'packets.jsonl').open() if '"machiavelli"' in x)
     prompt_html = ''.join(f"<h4>{escape(msg['role'])}</h4><pre>{escape(msg['content'])}</pre>" for msg in packet['request']['messages'])
@@ -856,7 +856,7 @@ def page_random(tables: Path, out: Path, title: str) -> Path:
               '<h2>4. D&D alignment</h2>', img(dnd_png),
               '<p>Calibrated nats toward the more lawful (x) and more good (y) option, from the source D&D labels. Crosses = 95% intervals. DeepSeek is the reference, so it sits at (0, 0) by definition.</p>',
               '<h2>5. Calibration: decisiveness before and after</h2>', img(calib_png),
-              '<p>Each curve: how far apart a model\'s stated percentages for two options of a question are (absolute log-odds, each question weighted equally). Left of DeepSeek (black) = spreads its percentages more evenly. '
+              '<p>Each curve: how far apart a model\'s stated percentages for two options of a question are (absolute log-odds, each question weighted equally). Left of DeepSeek (grey) = spreads its percentages more evenly. '
               'Calibration maps each model onto DeepSeek\'s curve using quantiles fitted on the other half of the questions; option order within a question never changes. '
               'Overlap on the held-out half shows the decisiveness scale transfers, not that preferences are correct.</p>',
               '<h2>Details</h2>',
@@ -868,7 +868,7 @@ def page_random(tables: Path, out: Path, title: str) -> Path:
               + ('<li>Game questions that contain the unfilled placeholder <code>user_input</code> (any capitalisation) where the game expected a player-chosen name (flagged by Qwen and Gemini in their setup notes); they are left out of every figure.</li>'
                  if len(lines) < len(list(tables.open())) else '<li>The game placeholder <code>user_input</code> (a player-chosen name) is shown to models as "[chosen name]", with a line saying the game text does not give the name'
                  + (f" ({len(lines[0]['_meta']['repaired_questions'])} questions re-asked with that line)" if lines[0]['_meta'].get('repaired_questions') else '') + '.</li>') +
-              '<li>Leftover role-play: on mirrored test scenes where only the character\'s trait flips (loves vs hates dung, a spy who never lies vs one with no rule), the share of choice that follows the character is 0.07-0.15 for Muse, Luna, DeepSeek and Gemini but 0.30 for Qwen (0.28 on the spy mission; <code>outputs/20261027_probe3_results/results.md</code>). Part of Qwen\'s game gap may be role adoption rather than its own values.</li>'
+              '<li>Leftover role-play: on mirrored test scenes where only the character\'s trait flips (loves vs hates dung, a spy who never lies vs one with no rule), the stated percentages change by 0.07-0.15 (total-variation distance; 0 = no change, 1 = complete) for Muse, Luna, DeepSeek and Gemini but by 0.30 for Qwen (0.28 on the spy mission; <code>outputs/20261027_probe3_results/results.md</code>). The change is toward the character: averaged over the six taste pairs (dung, mud, fish sauce, slugs, ice bath, wet socks), Qwen gives the character\'s favourite 32% when the character loves it and 4% when it hates it. Part of Qwen\'s game gap may be role adoption rather than its own values.</li>'
               '<li>Calibration halves share games/topics: no test on unseen games. Maps are held fixed in the intervals.</li>'
               '<li>Muse and Luna return only reasoning summaries.</li></ul></details>',
               '<details><summary>The exact prompt (one game request as sent; option order rotates between draws)</summary>' + prompt_html + '</details>',

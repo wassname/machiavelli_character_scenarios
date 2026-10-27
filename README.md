@@ -40,7 +40,7 @@ The horizontal axis on the left is overall goodness. The other axes are what rem
 
 ![D&D alignment relative to DeepSeek](docs/figures/random1000_v10_dnd.png)
 
-Limits: the labels are model judgements. Intervals resample games/topics and the two answers, but not the rescaling or the labels. All numbers are relative to DeepSeek; with an earlier prompt that let models play the character, the order changed (Muse was ahead of DeepSeek), probably because DeepSeek role-played more. Raw replies are not published. Code: `scripts/evaluation/run_tiny_eval.py` (prompt `isekai-v10-probabilities`) and `scripts/evaluation/plot_probability_eval.py`.
+Limits: the labels are model judgements. Intervals resample games/topics and the two answers, but not the rescaling or the labels. All numbers are relative to DeepSeek; with an earlier prompt that let models play the character, the order changed (Muse was ahead of DeepSeek); a plausible reason, not tested directly, is that DeepSeek role-played more. Under the current prompt Qwen still follows the character somewhat on test scenes (its choices change by 0.30 when only the character's trait flips, others 0.07-0.15), so part of Qwen's game gap may be role-play. Raw replies are not published. Code: `scripts/evaluation/run_tiny_eval.py` (prompt `isekai-v10-probabilities`) and `scripts/evaluation/plot_probability_eval.py`.
 
 <!-- Latest comparison: PI/OpenAI. -->
 
