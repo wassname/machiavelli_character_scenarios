@@ -636,6 +636,19 @@ def plot_label_structure(basis: dict, groups: dict, out: Path) -> Path:
     return path
 
 
+def place_labels(ax, pts: list[tuple]) -> None:
+    # pts = (text, x, y, color, fontsize); put each label at the offset farthest (in pixels) from every other marker, so names do not cover logos.
+    ax.autoscale_view()
+    px = ax.transData.transform([(x, y) for _, x, y, _, _ in pts])
+    offsets = [(12, 10), (-12, 10), (12, -16), (-12, -16), (0, 20), (0, -24)]
+    for i, (text, x, y, color, size) in enumerate(pts):
+        others = np.delete(px, i, 0)
+        dist = lambda o: np.min(np.hypot(*(px[i] + np.array(o) * 1.5 - others).T)) if len(others) else 0
+        o = max(offsets, key=dist)
+        ax.annotate(text, (x, y), xytext=o, textcoords='offset points', color=color, fontsize=size, weight='normal' if 'DeepSeek' in text else 'bold',
+                    ha='left' if o[0] > 0 else 'right' if o[0] < 0 else 'center', va='bottom' if o[1] > 0 else 'top')
+
+
 def plot_pc_scatter(lines: list[dict], basis: dict, maps: dict, identity: dict, fold: dict, out: Path) -> tuple[Path, str]:
     # Models in calibrated nats along PC1-3: left PC1 vs PC2, right PC2 vs PC3. Crosses = 95% intervals; small hollow ring = uncalibrated; DeepSeek at (0, 0) as the reference.
     ds = 'deepseek/deepseek-v4.1-flash'
@@ -653,7 +666,7 @@ def plot_pc_scatter(lines: list[dict], basis: dict, maps: dict, identity: dict, 
         for c, (kx, ky) in enumerate(((0, 1), (1, 2))):
             ax = axs[r, c]
             logo(ax, 0, 0, 'DeepSeek repeat', .16)  # DeepSeek is the reference: (0, 0) by definition
-            ax.annotate('DeepSeek (reference)', (0, 0), xytext=(10, -14), textcoords='offset points', color='#666666', fontsize=8)
+            labels = [('DeepSeek (reference)', 0, 0, '#666666', 8)]
             for j, m in enumerate(models):
                 n = short(m)
                 x, y = cal[0][j, kx], cal[0][j, ky]
@@ -661,7 +674,8 @@ def plot_pc_scatter(lines: list[dict], basis: dict, maps: dict, identity: dict, 
                 ax.plot(raw[0][j, kx], raw[0][j, ky], 'o', mfc='none', mec=COLORS[n], ms=6, zorder=1)
                 ax.annotate('', (x, y), (raw[0][j, kx], raw[0][j, ky]), arrowprops={'arrowstyle': '-', 'color': COLORS[n], 'lw': .6, 'alpha': .5, 'ls': ':'}, zorder=1)
                 logo(ax, x, y, n)
-                ax.annotate(n, (x, y), xytext=(12, 10), textcoords='offset points', color=COLORS[n], fontsize=9, weight='bold')
+                labels.append((n, x, y, COLORS[n], 9))
+            place_labels(ax, labels)
             ax.axhline(0, color='#aaaaaa', lw=.8)
             ax.axvline(0, color='#aaaaaa', lw=.8)
             ax.set_xlabel(f'{short_name(kx)} [nats]', fontsize=9)

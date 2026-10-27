@@ -42,6 +42,10 @@ choice-pilot run="outputs/20261026_differentiated_pilot_v2" preview=".local/choi
 choice-question-normalization:
     OPENBLAS_NUM_THREADS=1 uv run --locked --with matplotlib python scripts/evaluation/question_normalized_profiles.py
 
+# PI/OpenAI: Build the random-set page (http://localhost:8081/random1000/) from a run's question tables; no inference.
+page-random run="outputs/20261027_random1000_v10" out=".local/choice_preview/random1000":
+    OPENBLAS_NUM_THREADS=1 uv run --locked --with matplotlib python scripts/evaluation/plot_probability_eval.py --tables "{{run}}/question_tables.jsonl" --out "{{out}}"
+
 # PI/OpenAI: Restore displayed choices without model calls.
 prepare out:
     uv run --locked python scripts/data/prepare_inputs.py --out "{{out}}"
