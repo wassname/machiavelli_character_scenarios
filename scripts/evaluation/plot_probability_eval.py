@@ -408,7 +408,7 @@ def calibration_before_after(tables: Path, out: Path) -> Path:
             for m, vals in mags.items():
                 ix = np.argsort(vals[col])
                 x, w = np.array(vals[col])[ix], np.array(vals[2])[ix]
-                c = 'black' if m == ds else COLORS[short(m)]
+                c = '#8a8a8a' if m == ds else COLORS[short(m)]
                 ax.plot(x, np.cumsum(w) / w.sum(), color=c, lw=2.2 if m == ds else 1.4, label='DeepSeek (reference)' if m == ds else short(m))
             ax.set_title(f'{name}: {title}', loc='left', fontsize=10)
             ax.set_xlim(0, 5)
@@ -417,7 +417,7 @@ def calibration_before_after(tables: Path, out: Path) -> Path:
     for ax in axs[1]:
         ax.set_xlabel('|log-odds| between two options of a question (nats; 0 = 50/50, 4.6 = 99/1)')
     axs[0, 0].legend(fontsize=9, loc='lower right')
-    fig.suptitle('How decisive each model is, before and after calibration (curve left of black = less decisive than DeepSeek)', fontsize=11)
+    fig.suptitle('How decisive each model is, before and after calibration (curve left of grey DeepSeek = less decisive than DeepSeek)', fontsize=11)
     path = out / 'calibration_before_after.png'
     fig.savefig(path, dpi=110)
     plt.close(fig)
@@ -544,7 +544,7 @@ def nats_per_label(tables: Path, out: Path) -> tuple[list[Path], str]:
     label_fn = lambda q: np.array([q['option_scores'][x] for x in q['options']], float)[:, keep] * sign
     res = {v: {src: nats_core(lines, src, label_fn, mp, fold) for src in SOURCES} for v, mp in (('uncalibrated', identity), ('calibrated', maps))}
     cols = [('uncalibrated', j) for j in range(len(models))] + [('calibrated', j) for j in range(len(models) + 1)]  # DeepSeek self once, at the end
-    names = [short(models[j]) if j < len(models) else 'DS repeat' for v, j in cols]
+    names = [short(models[j]) if j < len(models) else 'DeepSeek\nrepeat' for v, j in cols]
     figs, dnd_rows = [], []
     for fam, title, clip, height in (('virtues', 'virtue (vices flipped: blue = more virtuous, less of a vice)', .4, 17), ('behaviours', 'behaviour (blue = more of the behaviour, not always better)', .4, 8), ('dnd', 'D&D axis (order = lawful, morality = good)', .4, 2.4)):
         ix = [k for k, i in enumerate(keep) if dims[i]['family'] == fam]
@@ -559,15 +559,15 @@ def nats_per_label(tables: Path, out: Path) -> tuple[list[Path], str]:
             yy, xx = np.nonzero(sig)
             ax.plot(xx, yy, 'k.', ms=3)
             ax.axvline(len(models) - .5, color='k', lw=1.5)
-            ax.set_xticks(range(len(cols)), names, fontsize=8)
-            ax.tick_params(axis='x', top=True, labeltop=True)
+            ax.set_xticks(range(len(cols)), names, fontsize=8, rotation=45, ha='left', rotation_mode='anchor')
+            ax.tick_params(axis='x', top=True, labeltop=True, bottom=False, labelbottom=False)
             for g, text in ((len(models) / 2 - .5, 'uncalibrated'), (len(models) + (len(models) + 1) / 2 - .5, 'calibrated')):
-                ax.annotate(text, (g, 1), xycoords=ax.get_xaxis_transform(), xytext=(0, 24), textcoords='offset points', ha='center', fontsize=10, weight='bold')
+                ax.annotate(text, (g, 1), xycoords=ax.get_xaxis_transform(), xytext=(0, 40), textcoords='offset points', ha='center', fontsize=10, weight='bold')
             inf = res['calibrated'][src][4]
             ax.set_yticks(range(len(ix)), [f'{lab[k]} (n={inf[ix[k]]})' for k in order], fontsize=7)
-            ax.set_title(f"{sname} ({res['calibrated'][src][3]} questions; n = questions where the label differs)", loc='left', fontsize=10, pad=48)
+            ax.set_title(f"{sname} ({res['calibrated'][src][3]} questions)", loc='left', fontsize=10, pad=62)
         fig.colorbar(im, ax=axs, shrink=.6 if fam != 'dnd' else 1, label=f'nats vs DeepSeek (clipped at \u00b1{clip})')
-        fig.suptitle(f'Log-odds shift vs DeepSeek toward the option with more of each {title}; dot = 95% interval excludes 0 (DS repeat: outside DeepSeek\u2019s run-to-run range)', fontsize=10)
+        fig.suptitle(f'Log-odds shift vs DeepSeek toward the option with more of each {title}\ndot = 95% interval excludes 0, not adjusted for many labels (DeepSeek repeat: outside its run-to-run range); n = questions where the label differs', fontsize=10)
         path = out / f'nats_{fam}_random.png'
         fig.savefig(path, dpi=110)
         plt.close(fig)
@@ -690,7 +690,7 @@ def plot_pc_scatter(lines: list[dict], basis: dict, maps: dict, identity: dict, 
     path = out / 'pc_scatter.png'
     fig.savefig(path, dpi=110)
     plt.close(fig)
-    table = tabulate(rows, headers=['Source', 'Model', 'PC1 calibrated (95%)', 'PC2 calibrated', 'PC3 calibrated', 'PC1 uncalibrated', 'PC1 chosen option only', 'Questions'], tablefmt='html')
+    table = tabulate(rows, headers=['Source', 'Model', 'PC1 calibrated (95%)', 'PC2 calibrated', 'PC3 calibrated', 'PC1 uncalibrated', 'PC1 chosen option only (label-score difference, not nats)', 'Questions'], tablefmt='html')
     return path, table
 
 
@@ -744,14 +744,15 @@ def plot_dnd_scatter(res: dict, keep: list, dims: list, models: list, out: Path)
     fig, axs = plt.subplots(1, 2, figsize=(12, 5.4), constrained_layout=True, sharex=True, sharey=True)
     for ax, (src, name) in zip(axs, SOURCES.items()):
         point, lo, hi, n, inf = res['calibrated'][src]
+        labels = [('DeepSeek (reference)', 0, 0, '#666666', 8)]
         for j, m in enumerate(models):
             col = COLORS[short(m)]
             x, y = point[j, k_order], point[j, k_good]
             ax.errorbar(x, y, xerr=[[x - lo[j, k_order]], [hi[j, k_order] - x]], yerr=[[y - lo[j, k_good]], [hi[j, k_good] - y]], fmt='none', ecolor=col, lw=1.2, capsize=3)
             logo(ax, x, y, short(m))
-            ax.annotate(short(m), (x, y), xytext=(12, 10), textcoords='offset points', color=col, fontsize=9, weight='bold')
+            labels.append((short(m), x, y, col, 9))
         logo(ax, 0, 0, 'DeepSeek repeat', .16)  # DeepSeek is the reference: (0, 0) by definition
-        ax.annotate('DeepSeek (reference)', (0, 0), xytext=(10, -14), textcoords='offset points', color='#666666', fontsize=8)
+        place_labels(ax, labels)
         for (qx, qy, txt) in ((0.98, 0.98, 'lawful good'), (0.02, 0.98, 'chaotic good'), (0.02, 0.02, 'chaotic evil'), (0.98, 0.02, 'lawful evil')):
             ax.text(qx, qy, txt, transform=ax.transAxes, ha='right' if qx > .5 else 'left', va='top' if qy > .5 else 'bottom', color='#aaaaaa', fontsize=9, style='italic')
         ax.axhline(0, color='#888888', lw=.8)
@@ -791,11 +792,12 @@ def page_random(tables: Path, out: Path, title: str) -> Path:
     qs = sorted(qs, key=lambda q: hashlib.sha256(('example:' + q['source_id']).encode()).hexdigest())
     chosen = [q for src in SOURCES for q in [x for x in qs if x['source'] == src][:3]]
     want = {q['source_id'] for q in chosen}
-    hidden = {}  # (source_id, model) -> first draw's provider reasoning text (full for DeepSeek/Qwen/Gemini, summary for Muse/Luna)
+    hidden, shown = {}, {}  # (source_id, model, draw) -> provider reasoning text (full for DeepSeek/Qwen/Gemini, summary for Muse/Luna); displayed-to-original id map
     for line in (tables.parent / 'rest' / 'choices.jsonl').open():
         r = json.loads(line)
         if r['source_id'] in want and r['status'] == 'ok':
             hidden.setdefault((r['source_id'], r['model'], r['draw']), (r.get('provider_message') or {}).get('reasoning') or '')
+            shown[r['source_id'], r['model'], r['draw']] = r['displayed_to_original']
     ex = []
     for q in chosen:
         ms = q['models']
@@ -806,13 +808,21 @@ def page_random(tables: Path, out: Path, title: str) -> Path:
             d = v['draws'][0]
             h = hidden.get((q['source_id'], m, d['draw']), '')
             name = escape(short(m) if 'deepseek' not in m else 'DeepSeek')
-            replies += (f"<details><summary>{name}: stated reason (draw {d['draw'] + 1}), top option {max(d['probabilities'], key=d['probabilities'].get)}</summary>"
-                        f"<pre>{escape(d['reasoning'])}\n\nSetup note (optional, may be empty): {escape(d['setup_note'] or '(empty)')}</pre></details>"
+            order = shown.get((q['source_id'], m, d['draw']), {})
+            order_note = ('Option ids in this reply are as shown to the model: ' + ', '.join(f'shown {a} = table id {b}' for a, b in order.items()) + '\n\n') if order else ''
+            replies += (f"<details><summary>{name}: stated reason (draw {d['draw'] + 1}), top option (table id) {max(d['probabilities'], key=d['probabilities'].get)}</summary>"
+                        f"<pre>{escape(order_note + d['reasoning'])}\n\nSetup note (optional, may be empty): {escape(d['setup_note'] or '(empty)')}</pre></details>"
                         f"<details><summary>{name}: hidden reasoning ({'summary only' if m.split('/')[0] in ('meta', 'openai') else 'full text'}, {len(h)} characters)</summary><pre>{escape(h or '(none returned)')}</pre></details>")
         ex.append(f"<h4>{escape(q['source_id'])}</h4><pre>{escape(q['text'][-900:])}</pre>"
                   + tabulate(table, headers=['id', 'option'] + [short(m) if 'deepseek' not in m else 'DeepSeek' for m in ms], tablefmt='unsafehtml') + replies)
     packet = next(json.loads(x) for x in (tables.parent / 'packets.jsonl').open() if '"machiavelli"' in x)
     prompt_html = ''.join(f"<h4>{escape(msg['role'])}</h4><pre>{escape(msg['content'])}</pre>" for msg in packet['request']['messages'])
+    second = {}  # mean stated % for the second-shown option on two-option questions, per model
+    for stage in ('smoke', 'rest'):
+        for r in map(json.loads, (tables.parent / stage / 'choices.jsonl').open()):
+            if r['status'] == 'ok' and len(r['probabilities']) == 2:
+                second.setdefault(short(r['model']) if 'deepseek' not in r['model'] else 'DeepSeek', []).append(r['probabilities']['1'])
+    position_note = ', '.join(f'{m} {np.mean(v):.1f}%' for m, v in sorted(second.items()))
     takeaways = tables.parent / 'takeaways.html'  # hand-written summary of this run, kept next to its data
     blocks = [f'<h1>{escape(title)}</h1>',
               '<p>Five models stated a percentage for every option of 1,000 hash-random questions, 2 draws each: 500 <b>everyday dilemmas</b> (DailyDilemmas) and 500 <b>game scenarios</b> '
@@ -844,8 +854,8 @@ def page_random(tables: Path, out: Path, title: str) -> Path:
               '<details><summary>Every label, uncalibrated vs calibrated (virtues, behaviours, D&D)</summary><p>Same metric per label; most virtue rows repeat the overall-goodness result (section 1). '
               'n = questions where the label differs between options.</p>' + ''.join(img(x) for x in grid_pngs) + dnd_table + '</details>',
               '<details><summary>Known limits</summary><ul>'
-              '<li>DeepSeek favours the option shown second; models and DeepSeek see the same two orders, so this should largely cancel in comparisons (not tested order by order). '
-              'On everyday questions DeepSeek\'s two answers differ by +0.13 nats on overall goodness, just outside its run-to-run range; read everyday differences of about that size with caution.</li>'
+              f'<li>Option order: on two-option questions the option shown second gets on average {position_note}. Every model sees the same two orders, so an order preference should largely cancel in comparisons (not tested order by order).</li>'
+              '<li>Intervals hold the calibration maps fixed; labels are automated; filled dots are not adjusted for testing many labels. The "DeepSeek repeat" rows show DeepSeek\'s own run-to-run variation.</li>'
               + ('<li>Game questions that contain the unfilled placeholder <code>user_input</code> (any capitalisation) where the game expected a player-chosen name (flagged by Qwen and Gemini in their setup notes); they are left out of every figure.</li>'
                  if len(lines) < len(list(tables.open())) else '<li>The game placeholder <code>user_input</code> (a player-chosen name) is shown to models as "[chosen name]".</li>') +
               '<li>Calibration halves share games/topics: no test on unseen games. Maps are held fixed in the intervals.</li>'
