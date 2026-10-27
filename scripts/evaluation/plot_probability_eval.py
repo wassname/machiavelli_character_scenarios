@@ -600,7 +600,7 @@ def virtue_basis(lines: list[dict], groups: dict) -> dict:
         S = [np.array([q['option_scores'][x] for x in q['options']], float)[:, direct] * fav for q in lines[1:] if q['source'] == src]
         Z = np.vstack([x - x.mean(0) for x in S if np.isfinite(x).all()])
         _, sv, Vt = np.linalg.svd(Z, full_matrices=False)
-        V, load, names = [], [], []
+        V, load, names, ends = [], [], [], []
         for k in range(3):
             g = np.array([np.mean([Vt[k][ids.index(i)] for i in items]) for items in groups.values()])
             sgn = np.sign(g.sum()) if k == 0 else np.sign(g[list(groups).index('Truthfulness')] or 1)  # PC1: more virtue = +; PC2-3: truthfulness side = +
@@ -608,7 +608,8 @@ def virtue_basis(lines: list[dict], groups: dict) -> dict:
             load.append(g * sgn)
             order = np.argsort(load[-1])
             names.append('goodness' if k == 0 else f'{" & ".join(list(groups)[i].lower() for i in order[-2:][::-1])} \u2194 {" & ".join(list(groups)[i].lower() for i in order[:2])}')
-        out[src] = {'V': np.array(V), 'load': np.array(load), 'names': names, 'share': sv ** 2 / (sv ** 2).sum()}
+            ends.append(('less good', 'more good') if k == 0 else (' & '.join(list(groups)[i].lower() for i in order[:2]), ' & '.join(list(groups)[i].lower() for i in order[-2:][::-1])))  # (low end, high end)
+        out[src] = {'V': np.array(V), 'load': np.array(load), 'names': names, 'ends': ends, 'share': sv ** 2 / (sv ** 2).sum()}
     return {'direct': direct, 'fav': fav, 'ids': ids, 'src': out}
 
 
@@ -650,7 +651,7 @@ def place_labels(ax, pts: list[tuple]) -> None:
 
 
 def plot_pc_scatter(lines: list[dict], basis: dict, maps: dict, identity: dict, fold: dict, out: Path) -> tuple[Path, str]:
-    # Models in calibrated nats along PC1-3: left PC1 vs PC2, right PC2 vs PC3. Crosses = 95% intervals; small hollow ring = uncalibrated; DeepSeek at (0, 0) as the reference.
+    # Models in calibrated nats along PC1-3: left PC1 vs PC2, right PC2 vs PC3. Faint crosses = 95% intervals; DeepSeek at (0, 0) as the reference.
     ds = 'deepseek/deepseek-v4.1-flash'
     models = [m for m in lines[1]['models'] if m != ds]
     fig, axs = plt.subplots(2, 2, figsize=(13, 11), constrained_layout=True)
@@ -662,7 +663,6 @@ def plot_pc_scatter(lines: list[dict], basis: dict, maps: dict, identity: dict, 
         raw = nats_core(lines, src, g, identity, fold)
         cal = nats_core(lines, src, g, maps, fold)
         top = chosen_option_level(lines, src, lambda q, V=V: g(q)[:, 0] / np.sqrt(len(V)))
-        short_name = lambda k: f'PC{k + 1}' + (' ~goodness' if k == 0 else f' {b["names"][k]}')
         for c, (kx, ky) in enumerate(((0, 1), (1, 2))):
             ax = axs[r, c]
             logo(ax, 0, 0, 'DeepSeek repeat', .16)  # DeepSeek is the reference: (0, 0) by definition
@@ -670,23 +670,26 @@ def plot_pc_scatter(lines: list[dict], basis: dict, maps: dict, identity: dict, 
             for j, m in enumerate(models):
                 n = short(m)
                 x, y = cal[0][j, kx], cal[0][j, ky]
-                ax.errorbar(x, y, xerr=[[x - cal[1][j, kx]], [cal[2][j, kx] - x]], yerr=[[y - cal[1][j, ky]], [cal[2][j, ky] - y]], fmt='none', ecolor=COLORS[n], lw=1.3, capsize=3, zorder=2)
-                ax.plot(raw[0][j, kx], raw[0][j, ky], 'o', mfc='none', mec=COLORS[n], ms=6, zorder=1)
-                ax.annotate('', (x, y), (raw[0][j, kx], raw[0][j, ky]), arrowprops={'arrowstyle': '-', 'color': COLORS[n], 'lw': .6, 'alpha': .5, 'ls': ':'}, zorder=1)
+                ax.errorbar(x, y, xerr=[[x - cal[1][j, kx]], [cal[2][j, kx] - x]], yerr=[[y - cal[1][j, ky]], [cal[2][j, ky] - y]], fmt='none', ecolor=COLORS[n], lw=1, alpha=.45, capsize=2, zorder=2)
                 logo(ax, x, y, n)
                 labels.append((n, x, y, COLORS[n], 9))
             place_labels(ax, labels)
             ax.axhline(0, color='#aaaaaa', lw=.8)
             ax.axvline(0, color='#aaaaaa', lw=.8)
-            ax.set_xlabel(f'{short_name(kx)} [nats]', fontsize=9)
-            ax.set_ylabel(f'{short_name(ky)} [nats]', fontsize=9)
-            ax.set_title(sname, loc='left', fontsize=10)
+            (xl, xh), (yl, yh) = b['ends'][kx], b['ends'][ky]
+            ax.set_xlabel(f'\u2190 {xl}  |  {xh} \u2192   (PC{kx + 1}, nats vs DeepSeek)', fontsize=9)
+            ax.set_ylabel(f'\u2190 {yl}  |  {yh} \u2192   (PC{ky + 1}, nats)', fontsize=9)
+            ax.set_title(f'{sname}: PC{kx + 1} vs PC{ky + 1}', loc='left', fontsize=10)
+            first = lambda e: e.split(' & ')[0]
+            for qx, qy, tx, ty in ((.98, .98, xh, yh), (.02, .98, xl, yh), (.02, .02, xl, yl), (.98, .02, xh, yl)) if kx == 0 else ():  # PC2-vs-PC3 corners would read e.g. 'kindness + kindness'
+                ax.text(qx, qy, f'{first(tx)}\n+ {first(ty)}', transform=ax.transAxes, ha='right' if qx > .5 else 'left', va='top' if qy > .5 else 'bottom', color='#aaaaaa', fontsize=8, style='italic')
             for sp in ('top', 'right'):
                 ax.spines[sp].set_visible(False)
         for j, m in enumerate(models + ['DeepSeek repeat']):
             self_ = m == 'DeepSeek repeat'
             rows.append([sname, short(m)] + [fmt(cal[0][j, k], cal[1][j, k], cal[2][j, k], self_) for k in range(3)]
                         + [fmt(raw[0][j, 0], raw[1][j, 0], raw[2][j, 0], self_), '' if self_ else fmt(top[0][j], top[1][j], top[2][j]), cal[3]])
+    fig.suptitle('PC = a pattern in the options\' virtue labels (section 1). Position = how much more than DeepSeek (at 0, 0) the model favours one end of each pattern', fontsize=10)
     path = out / 'pc_scatter.png'
     fig.savefig(path, dpi=110)
     plt.close(fig)
@@ -783,6 +786,9 @@ def page_random(tables: Path, out: Path, title: str) -> Path:
     label_fn = lambda q: np.array([q['option_scores'][x] for x in q['options']], float)[:, keep] * sign
     res = {v: {src: nats_core(lines, src, label_fn, mp, fold) for src in SOURCES} for v, mp in (('uncalibrated', identity), ('calibrated', maps))}
     structure_png = plot_label_structure(basis, groups, out)
+    pattern_rows = [[sname, f'PC{k + 1}', f"{basis['src'][src]['share'][k]:.0%}", basis['src'][src]['ends'][k][1], basis['src'][src]['ends'][k][0]]
+                    for src, sname in SOURCES.items() for k in range(3)]
+    pattern_table = tabulate(pattern_rows, headers=['Source', 'Pattern', 'Share of label variation', 'Options high on it show more', 'Options low on it show more'], tablefmt='html')
     overall_png, overall_table = plot_pc_scatter(lines, basis, maps, identity, fold, out)
     spider_png, spider_table = plot_style_spider(lines, basis, groups, maps, fold, out)
     dnd_png = plot_dnd_scatter(res, keep, dims, models, out)
@@ -831,13 +837,15 @@ def page_random(tables: Path, out: Path, title: str) -> Path:
               'on the same question (+0.1 nats is about 1.1 times DeepSeek\'s odds). <b>Calibrated</b> = each model\'s spread of percentages is first mapped onto DeepSeek\'s (section 5), '
               'so an indecisive model is not read as preferring worse options.</p>',
               takeaways.read_text() if takeaways.exists() else '',
-              '<h2>1. What the virtue labels measure: three named components</h2>', img(structure_png),
-              '<p>Principal components of the 66 virtue scores of the options (centred within each question), from the labels only. Bars = mean loading of each virtue group. '
-              'PC1 holds about 70% of the variation and every group loads positively: it is overall goodness, so a model that prefers the good option wins on every virtue at once. '
-              'PC2 and PC3 are the largest trade-offs left; names come from the groups at each end.</p>',
+              '<h2>1. The virtue labels mostly measure one thing: overall goodness</h2>',
+              '<p>This section uses the labels only, no model answers. Within a question, an option that scores high on one virtue usually scores high on the others. '
+              'So the 66 virtue scores mostly move together: one pattern (PC1, the first principal component) holds about 70% of their variation, and it is simply "more good". '
+              'The next two patterns (PC2, PC3) are trade-offs between groups of virtues, named from the groups at each end.</p>' + pattern_table,
+              '<details><summary>How each virtue group loads on the three patterns</summary>' + img(structure_png) + '</details>',
               '<h2>2. Where each model sits on the components</h2>', img(overall_png),
-              '<p>Calibrated nats vs DeepSeek toward the option higher on each component; left PC1 vs PC2, right PC2 vs PC3. Cross = 95% interval (resampling games/topics, then each model\'s two draws); '
-              'small hollow ring = uncalibrated. DeepSeek is the reference, so it sits at (0, 0) by definition; its own run-to-run variation (its two answers compared) is in the Details numbers and is about the size of the smaller intervals. '
+              '<p>Each logo is a model; DeepSeek is the reference at (0, 0). Right of 0 (or above 0) = the model\'s odds favour the right (or upper) end of that pattern more than DeepSeek\'s do; left or below = the other end. '
+              'Unit: calibrated log-odds difference (nats), averaged over the option pairs of each question; +0.1 is on average about 1.1 times DeepSeek\'s odds. '
+              'The horizontal and vertical bars are separate 95% intervals (resampling games/topics, then each model\'s two draws); a bar crossing 0 means no shown difference from DeepSeek on that axis. Uncalibrated values are in the Numbers table. DeepSeek is the reference, so it sits at (0, 0) by definition; its own run-to-run variation (its two answers compared) is in the Details numbers and is about the size of the smaller intervals. '
               'Most of the interval width comes from differences between games/topics, not draws, so more draws would shrink it only a little; more questions would help.</p>',
               '<details><summary>Numbers, with the chosen-option check</summary>' + overall_table + '</details>',
               '<h2>3. Style: virtue-group preferences once overall goodness is removed</h2>', img(spider_png),

@@ -17,7 +17,34 @@ In the labelled scenarios, every action has a score for 80 virtues and vices fro
 
 [Dataset](https://huggingface.co/datasets/wassname/virtue-choices) · [Code](https://github.com/wassname/virtue-choices)
 
-## New comparison: do models choose differently?
+## Latest comparison: five models, 1,000 random questions
+
+Five models answered 500 everyday dilemmas and 500 game scenes, chosen at random. For each question, a model gave a percentage for every option, twice. The prompt asks the model to imagine it has taken the person's place: their situation and promises stay true, but it chooses with its own values.
+
+Each model is compared with DeepSeek v4.1 Flash on the same question. The unit is nats: +0.1 means the model's odds of the more virtuous option are about 1.1 times DeepSeek's. Some models spread their percentages more evenly than others; each model's percentages are rescaled to DeepSeek's spread first, so an undecided model is not read as preferring worse options.
+
+The 66 virtue labels mostly move together, so the main result is one number, overall goodness:
+
+| Overall goodness vs DeepSeek (95% interval) | Game scenes | Everyday dilemmas |
+|:--|--:|--:|
+| Muse Spark 1.3 | −0.01 (−0.08 to +0.05) | −0.14 (−0.23 to −0.04) |
+| GPT-5.6 Luna | −0.12 (−0.19 to −0.04) | +0.05 (−0.05 to +0.15) |
+| Gemini 3.8 Flash | −0.15 (−0.23 to −0.07) | −0.04 (−0.16 to +0.08) |
+| Qwen 3.8 27B | −0.20 (−0.28 to −0.12) | +0.03 (−0.06 to +0.14) |
+
+In game scenes, Qwen, Gemini and Luna choose less virtuous options than DeepSeek; Muse is about the same. In everyday dilemmas only Muse differs.
+
+![Each model relative to DeepSeek (centre): overall goodness against the next two virtue trade-offs](docs/figures/random1000_v10_components.png)
+
+The horizontal axis on the left is overall goodness. The other axes are what remains once goodness is removed: for example, Luna favours truthfulness and inquiry over kindness more than DeepSeek does, in both sources.
+
+![D&D alignment relative to DeepSeek](docs/figures/random1000_v10_dnd.png)
+
+Limits: the labels are model judgements. Intervals resample games/topics and the two answers, but not the rescaling or the labels. All numbers are relative to DeepSeek; with an earlier prompt that let models play the character, the order changed (Muse was ahead of DeepSeek), probably because DeepSeek role-played more. Raw replies are not published. Code: `scripts/evaluation/run_tiny_eval.py` (prompt `isekai-v10-probabilities`) and `scripts/evaluation/plot_probability_eval.py`.
+
+<!-- Latest comparison: PI/OpenAI. -->
+
+## Earlier comparison: do models choose differently?
 
 DeepSeek v4.1 Flash, Gemma 4 31B and Haiku 5.5 each completed all 3,860 virtue-labelled scenarios in both option orders: 23,160 replies. Mistral Small adds a separate 100-scene comparison, not part of these figures.
 
@@ -33,7 +60,7 @@ Pairwise choices differ on 24–28% of matched views:
 
 The left panel averages disagreement across original and reversed option orders, weighting each scene equally (65% game, 35% everyday). The right panel gives the two sources equal weight in a separate 64-scene pilot, 32 per source, with three fresh replies to each exact prompt and order. It subtracts average within-model repeat disagreement from between-model disagreement. All three 95% game/topic-grouped intervals remain above zero. This pilot does not estimate repeat variation for the entire pool.
 
-This improves coverage and checks repeat variation; it does not yet validate a test of the model's own moral preferences. These runs used the earlier character-role instruction and original source order plus reversal, without an initial shuffle. The pool still includes some history/identity menus. The current runner excludes reviewed invalid questions before calls and uses a shared seeded shuffle plus reversal. Its own-judgement framing was tested through actor/interview iterations and a small pinned-endpoint probe; that does not validate every question or model. There is no full comparison under this new protocol yet.
+This improves coverage and checks repeat variation; it does not yet validate a test of the model's own moral preferences. These runs used the earlier character-role instruction and original source order plus reversal, without an initial shuffle. The pool still includes some history/identity menus. The current runner excludes reviewed invalid questions before calls and uses a shared seeded shuffle plus reversal. Its own-judgement framing was tested through actor/interview iterations and a small pinned-endpoint probe; that does not validate every question or model. The latest comparison above uses a newer prompt.
 
 [Figure values and input hashes](docs/figures/choice_disagreement.json). Recreate the figure without inference calls: `uv run scripts/evaluation/plot_choice_disagreement.py`.
 
