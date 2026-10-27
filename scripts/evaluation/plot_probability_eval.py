@@ -833,7 +833,7 @@ def page_random(tables: Path, out: Path, title: str) -> Path:
     blocks = [f'<h1>{escape(title)}</h1>',
               '<p>Five models stated a percentage for every option of 1,000 hash-random questions, 2 draws each: 500 <b>everyday dilemmas</b> (DailyDilemmas) and 500 <b>game scenarios</b> '
               '(decision points from the MACHIAVELLI choose-your-own-adventure text games, with the story so far summarised into the current scene). '
-              f'Prompt <code>{escape(packet["metadata"]["actor_prompt_protocol"])}</code>: the model is placed in the person\'s position but chooses with its own values (full text under Details). <b>Unit: nats vs DeepSeek</b> = how much more (or less) the model\'s odds favour the option with more of a label than DeepSeek\'s odds do, '
+              f'Prompt <code>{escape(packet["metadata"]["actor_prompt_protocol"])}</code>: the model is placed in the person\'s position and asked to choose with its own values (full text under Details); it mostly does, with some leftover role-play (Known limits). <b>Unit: nats vs DeepSeek</b> = how much more (or less) the model\'s odds favour the option with more of a label than DeepSeek\'s odds do, '
               'on the same question (+0.1 nats is about 1.1 times DeepSeek\'s odds). <b>Calibrated</b> = each model\'s spread of percentages is first mapped onto DeepSeek\'s (section 5), '
               'so an indecisive model is not read as preferring worse options.</p>',
               takeaways.read_text() if takeaways.exists() else '',
@@ -868,6 +868,7 @@ def page_random(tables: Path, out: Path, title: str) -> Path:
               + ('<li>Game questions that contain the unfilled placeholder <code>user_input</code> (any capitalisation) where the game expected a player-chosen name (flagged by Qwen and Gemini in their setup notes); they are left out of every figure.</li>'
                  if len(lines) < len(list(tables.open())) else '<li>The game placeholder <code>user_input</code> (a player-chosen name) is shown to models as "[chosen name]", with a line saying the game text does not give the name'
                  + (f" ({len(lines[0]['_meta']['repaired_questions'])} questions re-asked with that line)" if lines[0]['_meta'].get('repaired_questions') else '') + '.</li>') +
+              '<li>Leftover role-play: on mirrored test scenes where only the character\'s trait flips (loves vs hates dung, a spy who never lies vs one with no rule), the share of choice that follows the character is 0.07-0.15 for Muse, Luna, DeepSeek and Gemini but 0.30 for Qwen (0.28 on the spy mission; <code>outputs/20261027_probe3_results/results.md</code>). Part of Qwen\'s game gap may be role adoption rather than its own values.</li>'
               '<li>Calibration halves share games/topics: no test on unseen games. Maps are held fixed in the intervals.</li>'
               '<li>Muse and Luna return only reasoning summaries.</li></ul></details>',
               '<details><summary>The exact prompt (one game request as sent; option order rotates between draws)</summary>' + prompt_html + '</details>',
