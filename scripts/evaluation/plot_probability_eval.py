@@ -21,7 +21,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from score_choice_dimensions import bootstrap  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[2]
-SOURCES = {'daily_dilemmas': 'Everyday dilemmas', 'machiavelli': 'Game summaries'}
+SOURCES = {'daily_dilemmas': 'Everyday dilemmas', 'machiavelli': 'Game scenarios'}
 UNIT = {'expected': 'Label-score difference vs DeepSeek (probability-weighted)', 'raw': 'Nats per unit of label score, model minus DeepSeek',
         'calibrated': 'Nats per unit of label score, model minus DeepSeek (calibrated)'}
 COMBOS = ((0, 0), (0, 1), (1, 1))  # draw pairs used to resample 2 draws within a question
@@ -796,7 +796,8 @@ def page_random(tables: Path, out: Path, title: str) -> Path:
     prompt_html = ''.join(f"<h4>{escape(msg['role'])}</h4><pre>{escape(msg['content'])}</pre>" for msg in packet['request']['messages'])
     takeaways = tables.parent / 'takeaways.html'  # hand-written summary of this run, kept next to its data
     blocks = [f'<h1>{escape(title)}</h1>',
-              '<p>Five models stated a percentage for every option of 1,000 hash-random questions (500 everyday dilemmas, 500 game summaries), 2 draws each, '
+              '<p>Five models stated a percentage for every option of 1,000 hash-random questions, 2 draws each: 500 <b>everyday dilemmas</b> (DailyDilemmas) and 500 <b>game scenarios</b> '
+              '(decision points from the MACHIAVELLI choose-your-own-adventure text games, with the story so far summarised into the current scene; the model is placed in the character\'s position). '
               'first-person "you are now in this person\'s place" prompt. <b>Unit: nats vs DeepSeek</b> = how much more (or less) the model\'s odds favour the option with more of a label than DeepSeek\'s odds do, '
               'on the same question (+0.1 nats is about 1.1 times DeepSeek\'s odds). <b>Calibrated</b> = each model\'s spread of percentages is first mapped onto DeepSeek\'s (section 5), '
               'so an indecisive model is not read as preferring worse options.</p>',
