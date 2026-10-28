@@ -19,7 +19,7 @@ DS = 'deepseek/deepseek-v4.1-flash'
 
 
 def analyse(lines: list[dict], basis: dict, maps: dict, fold: dict) -> dict:
-    # Returns {'rules': {source: (names, point, lo, hi, n_conflict)}, 'consistency': {model name: (halves everyday, halves games, everyday vs games)}}.
+    # Returns {'rules': {source: (names, point, lo, hi, n_conflict)}, 'consistency': {model name: (halves everyday, halves games, everyday vs games, answers everyday, answers games)}}.
     dims = lines[0]['_meta']['dimensions']
     k_order = next(i for i, d in enumerate(dims) if d['id'] == 'order')
     models = [m for m in lines[1]['models'] if m != DS]
@@ -62,9 +62,13 @@ def analyse(lines: list[dict], basis: dict, maps: dict, fold: dict) -> dict:
 
         for half in (None, 0, 1):
             prof[src, half] = nats_core(lines, src, lambda q, h=half: style(q, h), maps, fold)[0]  # models+self x 66
+        for d in (0, 2):  # answer 1 vs DeepSeek's answer 1, answer 2 vs DeepSeek's answer 2: independent noise, so a style-less model correlates near 0
+            prof[src, 'draw', d] = nats_core(lines, src, style, maps, fold, model_draws=d, ref_draws=d)[0]
     corr = lambda a, b: float(np.corrcoef(a, b)[0, 1])
     result['consistency'] = {n: (corr(prof['daily_dilemmas', 0][j], prof['daily_dilemmas', 1][j]), corr(prof['machiavelli', 0][j], prof['machiavelli', 1][j]),
-                                 corr(prof['daily_dilemmas', None][j], prof['machiavelli', None][j])) for j, n in enumerate(names)}
+                                 corr(prof['daily_dilemmas', None][j], prof['machiavelli', None][j]),
+                                 corr(prof['daily_dilemmas', 'draw', 0][j], prof['daily_dilemmas', 'draw', 2][j]), corr(prof['machiavelli', 'draw', 0][j], prof['machiavelli', 'draw', 2][j]))
+                              for j, n in enumerate(names)}  # (halves everyday, halves games, everyday vs games, answer 1 vs 2 everyday, answer 1 vs 2 games); the last two are 1 by construction for DeepSeek repeat
     rows = []
     for j, n in enumerate(names):
         rows.append([n] + [f'{corr(prof[s, 0][j], prof[s, 1][j]):+.2f}' for s in SOURCES]

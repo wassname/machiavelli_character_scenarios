@@ -442,7 +442,7 @@ def calibrated_logp(q: dict, model: str, maps: dict, fold: dict, pick: tuple = (
     return lp - np.logaddexp.reduce(lp)
 
 
-def nats_core(lines: list[dict], src: str, label_fn, maps: dict, fold: dict, resample: str = 'both') -> tuple:
+def nats_core(lines: list[dict], src: str, label_fn, maps: dict, fold: dict, resample: str = 'both', model_draws: int = 1, ref_draws: int = 1) -> tuple:
     # Log-odds shift toward the option with more of a label, model (calibrated) minus DeepSeek on the SAME question, averaged over option pairs weighted by label gap:
     #   nats = sum_q sum_{i<j} |x_i - x_j| * sign(x_i - x_j) * (delta_i - delta_j) / sum_q sum_{i<j} |x_i - x_j|,  delta = log p_model - log p_DeepSeek.
     # For a 2-option question this is exactly how many nats more the model's odds favour the higher-label option. label_fn(q) -> options x dims (NaN = missing).
@@ -486,7 +486,7 @@ def nats_core(lines: list[dict], src: str, label_fn, maps: dict, fold: dict, res
         with np.errstate(invalid='ignore', divide='ignore'):
             boot[r] = np.vstack([n_models, n_self]) / den[qi].sum(0)
     with np.errstate(invalid='ignore', divide='ignore'):
-        point = np.vstack([num[:, :, 1, 1].sum(0), num_self.sum(0)[None]]) / den.sum(0)  # both draws pooled = combo (0, 1)
+        point = np.vstack([num[:, :, model_draws, ref_draws].sum(0), num_self.sum(0)[None]]) / den.sum(0)  # draws: 1 = both pooled, 0 = draw 0 only, 2 = draw 1 only (model, DeepSeek)
     lo, hi = np.nanquantile(boot, .025, 0), np.nanquantile(boot, .975, 0)
     return point, lo, hi, nq, (den > 0).sum(0)
 
@@ -1003,7 +1003,7 @@ def page_random(tables: Path, out: Path, title: str) -> Path:
         names, point, lo, hi, n_conf = rc['rules'][src]
         rules_rows += [[sname, nm, fmt(point[j, 0], lo[j, 0], hi[j, 0], nm == 'DeepSeek repeat'), fmt(point[j, 1], lo[j, 1], hi[j, 1], nm == 'DeepSeek repeat'), n_conf] for j, nm in enumerate(names)]
     rules_table = tabulate(rules_rows, headers=['Source', 'Model', 'Toward the lawful option', 'Toward the good option', 'Questions where they differ'], tablefmt='html')
-    cons_table = tabulate([[n, f'{a:+.2f}', f'{b:+.2f}', f'{c:+.2f}'] for n, (a, b, c) in rc['consistency'].items()],
+    cons_table = tabulate([[n, f'{a:+.2f}', f'{b:+.2f}', f'{c:+.2f}'] for n, (a, b, c, *_) in rc['consistency'].items()],
                           headers=['Model', 'Two halves, everyday', 'Two halves, games', 'Everyday vs games'], tablefmt='html')
     rules_num = [{'source': src, 'model': nm, 'n': int(rc['rules'][src][4]),
                   'lawful': [round(float(v), 3) for v in (rc['rules'][src][1][j, 0], rc['rules'][src][2][j, 0], rc['rules'][src][3][j, 0])],
@@ -1011,7 +1011,9 @@ def page_random(tables: Path, out: Path, title: str) -> Path:
                  for src in SOURCES for j, nm in enumerate(rc['rules'][src][0])]  # [point, lo, hi] nats vs DeepSeek; DeepSeek repeat lo/hi = run-to-run range
     (out / 'rules_consistency.json').write_text(json.dumps({'author': 'PI/OpenAI', 'rules_numeric': rules_num, 'rules_headers': ['Source', 'Model', 'Toward the lawful option', 'Toward the good option', 'Questions where they differ'], 'rules': rules_rows,
                                                          'consistency_headers': ['Model', 'Two halves, everyday', 'Two halves, games', 'Everyday vs games'],
-                                                         'consistency': [[n, round(float(a), 2), round(float(b), 2), round(float(c), 2)] for n, (a, b, c) in rc['consistency'].items()]}, indent=1) + '\n')
+                                                         'consistency_draws_headers': ['Model', 'Answer 1 vs answer 2, everyday', 'Answer 1 vs answer 2, games'],
+                                                         'consistency_draws': [[n, round(float(d), 2), round(float(e), 2)] for n, (a, b, c, d, e) in rc['consistency'].items()],
+                                                         'consistency': [[n, round(float(a), 2), round(float(b), 2), round(float(c), 2)] for n, (a, b, c, *_) in rc['consistency'].items()]}, indent=1) + '\n')
     everest = rp['everest_take_slot']
     qs = lines[1:]
     qs = sorted(qs, key=lambda q: hashlib.sha256(('example:' + q['source_id']).encode()).hexdigest())

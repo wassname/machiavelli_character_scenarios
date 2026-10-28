@@ -79,8 +79,9 @@ export default function App() {
         </tbody></table>
 
       <h2>Appendix: does each model have a consistent style?</h2>
-      <p>Is the style in Figure 4b real or noise? If real, it should look the same in game scenes and everyday dilemmas. 1 = the same pattern. The italic DeepSeek row is DeepSeek against itself: noise.</p>
-      <ConsistencyTable rows={rc.consistency as [string, number, number, number][]} />
+      <p>Is the style in Figure 4b real or noise? Two tests, 1 = the same pattern. Same style in games and everyday: does it hold on different questions? Same style on its 2 answers: does it repeat when the model answers the same questions again?
+        The second is easier to pass, because the questions are the same. The italic DeepSeek row is DeepSeek against itself: noise.</p>
+      <ConsistencyTable rows={rc.consistency as [string, number, number, number][]} draws={(rc as unknown as { consistency_draws: [string, number, number][] }).consistency_draws} />
       <p className="footnote">Code and data: <a href="https://github.com/wassname/virtue-choices">github.com/wassname/virtue-choices</a></p>
     </main>
   )

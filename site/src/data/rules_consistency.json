@@ -281,6 +281,43 @@
   "Two halves, games",
   "Everyday vs games"
  ],
+ "consistency_draws_headers": [
+  "Model",
+  "Answer 1 vs answer 2, everyday",
+  "Answer 1 vs answer 2, games"
+ ],
+ "consistency_draws": [
+  [
+   "Muse",
+   0.53,
+   0.53
+  ],
+  [
+   "Qwen",
+   0.68,
+   0.51
+  ],
+  [
+   "Gemini",
+   0.86,
+   0.73
+  ],
+  [
+   "Luna",
+   0.92,
+   0.81
+  ],
+  [
+   "Haiku",
+   0.88,
+   0.72
+  ],
+  [
+   "DeepSeek repeat",
+   1.0,
+   1.0
+  ]
+ ],
  "consistency": [
   [
    "Muse",
