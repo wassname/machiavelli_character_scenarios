@@ -101,7 +101,7 @@ Each point shows how often a model picks the good (up) or lawful (right) option,
 
 ![D&D alignment of six models' choices, relative to DeepSeek](docs/figures/random1000_v12_dnd.png)
 
-In game scenes, Qwen and Gemini pick less good options than DeepSeek; Muse, Luna and Haiku are close to it. In everyday dilemmas, Muse and Gemini pick slightly less good options. The virtue labels give the same picture.
+In game scenes, Qwen and Gemini pick less good options than DeepSeek, Luna slightly less, and Muse and Haiku are close to it; Qwen also picks less lawful options. In everyday dilemmas, Muse and Gemini pick slightly less good options. The 66 virtue labels give the same picture for goodness.
 
 ## Discussion: choosing as itself, or playing the character?
 
