@@ -1028,14 +1028,14 @@ def page_random(tables: Path, out: Path, title: str) -> Path:
               + 'This holds for these 4 scenes; other scenes may differ, and it does not rank the models. '
               + 'Some change is reasonable: a promise the character made is still a promise. (The README table uses all 4 answers per version, so its numbers differ slightly.) '
               f'Source: <code>{escape(", ".join(rp["runs"]))}</code>.</p>',
-              '<h2>2. Main result: how often each model picks the good option</h2>', img(goodness_png),
-              '<p>The 66 virtue labels mostly move together, so the main difference between models is how often they pick the generally better option. '
-              'Each logo is a model compared with DeepSeek on the same questions; the line is its 95% interval. +0.1 nats means about 10% higher odds of picking the better option than DeepSeek. '
-              'An interval crossing 0 means no shown difference from DeepSeek, not proof of equality. "Good" here means the option the virtue labels score higher, not a moral verdict on the model. '
-              'The grey row is DeepSeek against itself (its two answers compared, uncalibrated): it shows how far a model can land from 0 by chance. Calibration itself adds a little noise on game scenarios (+0.014 nats, see Details). One game question is left out for every model because Haiku never gave valid percentages for it.</p>',
-              '<p><b>The same, as absolute positions.</b> Here 0 is a chooser that splits its percentages evenly, so it has no preference. Each model is first rescaled to DeepSeek\'s spread, as above (logo, with 95% interval); '
-              'the hollow circle uses the model\'s own percentages, so a model that hedges sits nearer 0. Every model picks the more good option far more often than an even split would; the differences between them are small next to that.</p>',
-              img(goodness_abs_png),
+              '<h2>2. Main result: how often each model picks the good option</h2>', img(goodness_abs_png),
+              '<p>The 66 virtue labels mostly move together, so the main difference between models is how often they pick the generally better option ("good" = what the labels score higher, not a moral verdict). '
+              'Here 0 is a chooser that splits its percentages evenly, so it has no preference. Each logo is a model after rescaling to DeepSeek\'s spread, with its 95% interval; '
+              'the hollow circle uses the model\'s own percentages, so a model that hedges sits nearer 0. Every model picks the more good option far more often than an even split would (+2.2 nats is about 9 times the odds); the differences between models are small next to that.</p>'
+              '<p><b>Differences from DeepSeek.</b> The same numbers minus DeepSeek\'s, which makes the small differences visible. In game scenarios Qwen and Gemini pick less good options (both -0.14 nats, about 13% lower odds). '
+              'In everyday dilemmas only Muse does (-0.11); Gemini\'s everyday result (-0.11 here) changes sign when the calibration is fitted to single answers instead of the two-answer average, so it is not shown to be real. '
+              'These three hold when the calibration step is refitted inside the bootstrap and when it is fitted to single answers (<code>calibration_heldout/pc1_refit.json</code>). '
+              'An interval crossing 0 means no shown difference, not proof of equality. The grey row is DeepSeek against itself (its two answers compared, uncalibrated). One game question is left out for every model because Haiku never gave valid percentages for it.</p>', img(goodness_png),
               '<h2>3. The same answers on the D&D chart: models differ mostly in how good</h2>', img(dnd_png),
               '<p>The same answers scored on the D&D axes: up = picks the more good option, right = picks the more lawful option, compared with DeepSeek at the centre (0, 0). Bars are 95% intervals. '
               'Corner names are directions relative to DeepSeek, not alignments: below 0 means picking less good options than DeepSeek, not being evil. '
@@ -1045,7 +1045,7 @@ def page_random(tables: Path, out: Path, title: str) -> Path:
               + f"DeepSeek sits at lawful {anchor['daily_dilemmas'][0]:+.2f}, good {anchor['daily_dilemmas'][1]:+.2f} on everyday dilemmas and {anchor['machiavelli'][0]:+.2f}, {anchor['machiavelli'][1]:+.2f} on game scenarios: every model is lawful good, and the differences between them are small next to that.</p>"
               + img(dnd_abs_png) + '</details>' +
               '<p><b>When the rule and the good deed differ.</b> On the questions where the most lawful option is not the most virtuous one, no model clearly picks the rule more than DeepSeek does. '
-              'Gemini (both settings) and Qwen (games) pick the less good option more often, which repeats step 2 on a smaller set of questions; their intervals only just exclude 0.</p>'
+              'Gemini (both settings, though its everyday result depends on the calibration, see step 2) and Qwen (games) pick the less good option more often, which repeats step 2 on a smaller set of questions; their intervals only just exclude 0.</p>'
               '<details><summary>Numbers</summary>' + rules_table + '</details>',
               '<h2>4. Beyond goodness: only Luna has a clear style that holds in both settings</h2>', img(spider_png),
               '<p>What is left once overall goodness is removed. A spoke outside the dashed ring = the model favours that kind of virtue more than DeepSeek does, beyond what goodness alone predicts. '
