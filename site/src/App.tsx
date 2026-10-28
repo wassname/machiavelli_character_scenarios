@@ -3,6 +3,7 @@ import raw from './data/dnd_web.json'
 import rc from './data/rules_consistency.json'
 import spider from './data/spider.json'
 import Spider, { type SpiderData } from './Spider'
+import { ConsistencyTable } from './Tables'
 
 // Data: outputs/20261027_random1000_v12/calibration_heldout/dnd_web.json and the page build's rules_consistency.json + figures, copied by `just site-build`.
 // Order (wassname, AGENTS.md "Results narrative"): the narrative first, linking to numbered figures; the figures follow, each with its caption directly under it. -- PI/OpenAI
@@ -77,13 +78,9 @@ export default function App() {
           <tr><td>2: buy blood</td><td>0</td><td>+</td><td>−</td><td>+</td><td>…</td><td>chaotic neutral</td><td>no</td></tr>
         </tbody></table>
 
-      <h2>Appendix: rules versus virtue, and how consistent each style is</h2>
-      <p>On the questions where the most lawful option is not the most virtuous one, which way does each model lean, compared with DeepSeek (nats, 95% interval)? No model clearly picks the rule more than DeepSeek does.</p>
-      <table><thead><tr>{rc.rules_headers.map(h => <th key={h}>{h}</th>)}</tr></thead>
-        <tbody>{rc.rules.map((r, i) => <tr key={i}>{r.map((c, j) => <td key={j}>{String(c)}</td>)}</tr>)}</tbody></table>
-      <p>How consistent is each model's style? The correlation of its 66-virtue pattern (goodness removed, vs DeepSeek) between two random halves of the questions, and between everyday and game questions. 1 = the same pattern each time; the DeepSeek repeat row shows what noise alone gives.</p>
-      <table><thead><tr>{rc.consistency_headers.map(h => <th key={h}>{h}</th>)}</tr></thead>
-        <tbody>{rc.consistency.map((r, i) => <tr key={i}>{r.map((c, j) => <td key={j}>{typeof c === 'number' ? (c >= 0 ? '+' : '') + c.toFixed(2) : c}</td>)}</tr>)}</tbody></table>
+      <h2>Appendix: does each model have a consistent style?</h2>
+      <p>Is the style in Figure 4b real or noise? If real, it should look the same in game scenes and everyday dilemmas. 1 = the same pattern. The italic DeepSeek row is DeepSeek against itself: noise.</p>
+      <ConsistencyTable rows={rc.consistency as [string, number, number, number][]} />
       <p className="footnote">Code and data: <a href="https://github.com/wassname/virtue-choices">github.com/wassname/virtue-choices</a></p>
     </main>
   )

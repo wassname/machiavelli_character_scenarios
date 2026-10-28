@@ -1005,7 +1005,11 @@ def page_random(tables: Path, out: Path, title: str) -> Path:
     rules_table = tabulate(rules_rows, headers=['Source', 'Model', 'Toward the lawful option', 'Toward the good option', 'Questions where they differ'], tablefmt='html')
     cons_table = tabulate([[n, f'{a:+.2f}', f'{b:+.2f}', f'{c:+.2f}'] for n, (a, b, c) in rc['consistency'].items()],
                           headers=['Model', 'Two halves, everyday', 'Two halves, games', 'Everyday vs games'], tablefmt='html')
-    (out / 'rules_consistency.json').write_text(json.dumps({'author': 'PI/OpenAI', 'rules_headers': ['Source', 'Model', 'Toward the lawful option', 'Toward the good option', 'Questions where they differ'], 'rules': rules_rows,
+    rules_num = [{'source': src, 'model': nm, 'n': int(rc['rules'][src][4]),
+                  'lawful': [round(float(v), 3) for v in (rc['rules'][src][1][j, 0], rc['rules'][src][2][j, 0], rc['rules'][src][3][j, 0])],
+                  'good': [round(float(v), 3) for v in (rc['rules'][src][1][j, 1], rc['rules'][src][2][j, 1], rc['rules'][src][3][j, 1])]}
+                 for src in SOURCES for j, nm in enumerate(rc['rules'][src][0])]  # [point, lo, hi] nats vs DeepSeek; DeepSeek repeat lo/hi = run-to-run range
+    (out / 'rules_consistency.json').write_text(json.dumps({'author': 'PI/OpenAI', 'rules_numeric': rules_num, 'rules_headers': ['Source', 'Model', 'Toward the lawful option', 'Toward the good option', 'Questions where they differ'], 'rules': rules_rows,
                                                          'consistency_headers': ['Model', 'Two halves, everyday', 'Two halves, games', 'Everyday vs games'],
                                                          'consistency': [[n, round(float(a), 2), round(float(b), 2), round(float(c), 2)] for n, (a, b, c) in rc['consistency'].items()]}, indent=1) + '\n')
     everest = rp['everest_take_slot']

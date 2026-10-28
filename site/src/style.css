@@ -10,3 +10,10 @@ h2 { margin-top: 48px; }
 blockquote.prompt { margin: 8px 0 16px; padding: 8px 16px; background: #f6f4ec; border-left: 3px solid #cfcab8; font-size: 15px; }
 h3 { font-weight: 500; font-size: 18px; margin: 18px 0 0; color: #333; }
 .legend { margin: 4px 0 8px; font-size: 15px; }
+table.results { margin: 6px 0 22px; }
+table.results caption { text-align: left; font-weight: 600; padding: 4px 0; }
+table.results th { font-weight: 600; border-bottom: 2px solid #999; white-space: nowrap; }
+table.results td.num, table.results th.num { text-align: right; font-variant-numeric: tabular-nums; }
+table.results .ci { color: #888; font-size: 13px; }
+table.results tr.base td { color: #777; border-top: 1px solid #bbb; }
+table.results td.note { color: #555; font-size: 14px; min-width: 260px; }
