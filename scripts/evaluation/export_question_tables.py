@@ -11,7 +11,7 @@ import pyarrow.parquet as pq
 ROOT = Path(__file__).resolve().parents[2]
 
 
-def export(run: Path, repairs: list[Path] = (), extra_models: list[Path] = ()) -> Path:
+def export(run: Path, repairs: list[Path] = (), extra_models: list[Path] = (), drop: list[str] = ()) -> Path:
     rows = [json.loads(l) for stage in ('smoke', 'rest') for l in (run / stage / 'choices.jsonl').open()]
     redraw = [f for stage in ('smoke', 'rest') if (f := run.with_name(run.name + '_redraw') / stage / 'choices.jsonl').exists()]
     best = {(r['source_id'], r['model'], r['draw']): r for r in rows}
@@ -42,6 +42,10 @@ def export(run: Path, repairs: list[Path] = (), extra_models: list[Path] = ()) -
                     add[k] = r | {'redraw_of_invalid': True}
         assert not {m for _, m, _ in add} & {m for _, m, _ in best}, 'extra-model run repeats a main-run model'
         best.update(add)
+    # Explicitly listed (question, model) pairs whose replies stayed invalid after repeated redraws are dropped and recorded, never scored.
+    dropped = sorted(k for k in best if f'{k[0]}|{k[1]}' in set(drop))
+    assert {f'{k[0]}|{k[1]}' for k in dropped} == set(drop), 'a --drop entry matches no reply'
+    best = {k: r for k, r in best.items() if k not in set(dropped)}
     # A provider content-policy block is a recorded refusal, not a score: that draw is dropped and listed; any other failure stops.
     refused = sorted(k for k, r in best.items() if r['status'] == 'api_refusal' or (r['status'] == 'infrastructure_error' and 'PROHIBITED_CONTENT' in json.dumps(r.get('error'))))
     bad = [k for k, r in best.items() if r['status'] != 'ok' and k not in refused]
@@ -55,7 +59,7 @@ def export(run: Path, repairs: list[Path] = (), extra_models: list[Path] = ()) -
         by[sid][m].append({'draw': d, 'probabilities': r['original_probabilities'], 'reasoning': r['reasoning'], 'setup_note': r['setup_note']})
     out = run / 'question_tables.jsonl'
     with out.open('w') as f:
-        f.write(json.dumps({'_meta': {'author': 'PI/OpenAI', 'run': str(run), 'dimensions': dims, 'provider_refusals': [list(k) for k in refused], 'repair_runs': [str(x) for x in repairs], 'repaired_questions': sorted(replaced), 'extra_model_runs': [str(x) for x in extra_models]}}) + '\n')
+        f.write(json.dumps({'_meta': {'author': 'PI/OpenAI', 'run': str(run), 'dimensions': dims, 'provider_refusals': [list(k) for k in refused], 'repair_runs': [str(x) for x in repairs], 'repaired_questions': sorted(replaced), 'extra_model_runs': [str(x) for x in extra_models], 'dropped_invalid_after_redraws': [list(k) for k in dropped]}}) + '\n')
         for sid, s in scenes.items():
             opts = list(s['choice_text'])
             models = {m: {'draws': sorted(v, key=lambda x: x['draw']),
@@ -71,5 +75,6 @@ if __name__ == '__main__':
     parser.add_argument('--run', type=Path, required=True)
     parser.add_argument('--repair', type=Path, nargs='*', default=[], help='runs that re-asked whole questions with a repaired prompt; their replies replace the main run\'s')
     parser.add_argument('--extra-models', type=Path, nargs='*', default=[], help='runs with the same prompt and questions for additional models')
+    parser.add_argument('--drop', nargs='*', default=[], help='"source_id|model" pairs whose replies stayed invalid after redraws; dropped and recorded')
     a = parser.parse_args()
-    export(a.run, a.repair, a.extra_models)
+    export(a.run, a.repair, a.extra_models, a.drop)
