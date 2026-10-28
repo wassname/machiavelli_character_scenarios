@@ -236,7 +236,7 @@ def build(row: dict, draw: int, model: str, config: dict, level: str | None = No
             'metadata': {'source_id': row['source_id'], 'game_id': row['game_id'], 'model': model, 'draw': draw,
             'source': row['source'], 'eval_cluster': row['eval_cluster'], 'displayed_to_original': mapping,
             'actor_prompt_protocol': config['protocol'], 'option_order_policy': config['option_order_policy'],
-            'original_prompt_sha256': hashlib.sha256(row['text'].encode()).hexdigest(), 'minimum_request_interval_seconds': 0,
+            'original_prompt_sha256': hashlib.sha256(row['text'].encode()).hexdigest(), 'minimum_request_interval_seconds': s.get('minimum_request_interval_seconds', 0),
             'level': level, 'eval_role': row.get('eval_role')}}
 
 

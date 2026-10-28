@@ -7,7 +7,7 @@
   "option_order_seed": 20261025,
   "concurrency": 64,
   "reference_model": "deepseek/deepseek-v4.1-flash",
-  "comparison_note": "Stated per-option probabilities (self-reports, not logprobs). Temperature 1 with no seed (Luna: provider default; it rejects temperature). reasoning.effort=medium for every model, as a nominal setting: actual thinking tokens differ by endpoint and are recorded. Output cap 16000; a cut-off reply is a failure, never salvaged. DeepSeek is the reference model for question selection and the nats baseline. Prompt isekai-v12-probabilities: body carries over, mind does not; promises and relationships are facts, keeping them is the model's choice with consequences. Haiku 5.5 added on wassname's request (\"if you can afford it add haiku 5-5 batch mode\"), Standard endpoint: OpenRouter's :batch variant returned 404 'cannot be used with the chat/completions endpoint' (needs its separate batch API); standard price $0.10/$0.50 per million, about $2 for this run. Temperature not sent: this endpoint does not list it (default 1).",
+  "comparison_note": "Stated per-option probabilities (self-reports, not logprobs). Temperature 1 with no seed (Luna: provider default; it rejects temperature). reasoning.effort=medium for every model, as a nominal setting: actual thinking tokens differ by endpoint and are recorded. Output cap 16000; a cut-off reply is a failure, never salvaged. DeepSeek is the reference model for question selection and the nats baseline. Prompt isekai-v12-probabilities: body carries over, mind does not; promises and relationships are facts, keeping them is the model's choice with consequences. Haiku 5.5 added on wassname's request (\"if you can afford it add haiku 5-5 batch mode\"), Standard endpoint: OpenRouter's :batch variant returned 404 'cannot be used with the chat/completions endpoint' (needs its separate batch API); standard price $0.10/$0.50 per million, about $2 for this run. Temperature not sent: this endpoint does not list it (default 1). Anthropic allows 50 structured-output grammar compilations per minute, so requests start at least 1.5 s apart.",
   "models": {
     "anthropic/claude-haiku-5.5": {
       "display_name": "Haiku",
@@ -71,7 +71,8 @@
           "exclude": false
         },
         "max_tokens": 8192
-      }
+      },
+      "minimum_request_interval_seconds": 1.5
     }
   },
   "reasoning_levels_note": "Level 0 = reasoning disabled where the model allows it (DeepSeek, Qwen: enabled=false; Luna: effort none), else the lowest effort (Muse minimal, Gemini low; both have mandatory reasoning). 10k/20k/40k = reasoning.max_tokens, output cap = budget + 4k; OpenRouter may translate a token budget into an effort level for some providers, so actual reasoning tokens are recorded and authoritative. max = highest listed effort (Gemini high, Qwen xhigh), output cap 64k (Gemini's endpoint maximum is 65,536). Follow-up after a cut-off reply: replay the returned reasoning_details and partial text, ask for the final JSON, at the model's level-0 reasoning setting with an 8k cap."
