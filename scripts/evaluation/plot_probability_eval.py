@@ -25,8 +25,8 @@ SOURCES = {'daily_dilemmas': 'Everyday dilemmas', 'machiavelli': 'Game scenarios
 UNIT = {'expected': 'Label-score difference vs DeepSeek (probability-weighted)', 'raw': 'Nats per unit of label score, model minus DeepSeek',
         'calibrated': 'Nats per unit of label score, model minus DeepSeek (calibrated)'}
 COMBOS = ((0, 0), (0, 1), (1, 1))  # draw pairs used to resample 2 draws within a question
-COLORS = {'Muse': '#0467DF', 'Qwen': '#6950EF', 'Gemini': '#E37400', 'Luna': '#111111', 'DeepSeek repeat': '#8a8a8a'}  # 'DeepSeek repeat' = DeepSeek answer 1 vs answer 2, shown as 'DeepSeek repeat'  # near each lab's brand colour, kept distinct
-LOGOS = {'Muse': 'meta', 'Qwen': 'qwen', 'Gemini': 'google', 'Luna': 'openai', 'DeepSeek repeat': 'deepseek'}  # data/logos/*.png, from wassname.github.io/ml-bench
+COLORS = {'Muse': '#0467DF', 'Qwen': '#6950EF', 'Gemini': '#E37400', 'Luna': '#111111', 'Haiku': '#8C4A2F', 'DeepSeek repeat': '#8a8a8a'}  # 'DeepSeek repeat' = DeepSeek answer 1 vs answer 2, shown as 'DeepSeek repeat'  # near each lab's brand colour, kept distinct
+LOGOS = {'Muse': 'meta', 'Qwen': 'qwen', 'Gemini': 'google', 'Luna': 'openai', 'Haiku': 'anthropic', 'DeepSeek repeat': 'deepseek'}  # data/logos/*.png, from wassname.github.io/ml-bench
 
 
 def short(model: str) -> str:

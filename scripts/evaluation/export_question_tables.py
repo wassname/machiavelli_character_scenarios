@@ -11,7 +11,7 @@ import pyarrow.parquet as pq
 ROOT = Path(__file__).resolve().parents[2]
 
 
-def export(run: Path, repairs: list[Path] = ()) -> Path:
+def export(run: Path, repairs: list[Path] = (), extra_models: list[Path] = ()) -> Path:
     rows = [json.loads(l) for stage in ('smoke', 'rest') for l in (run / stage / 'choices.jsonl').open()]
     redraw = [f for stage in ('smoke', 'rest') if (f := run.with_name(run.name + '_redraw') / stage / 'choices.jsonl').exists()]
     best = {(r['source_id'], r['model'], r['draw']): r for r in rows}
@@ -29,6 +29,19 @@ def export(run: Path, repairs: list[Path] = ()) -> Path:
             assert (r['source_id'], r['model'], r['draw']) in best
             best[r['source_id'], r['model'], r['draw']] = r | {'repair_run': str(rep_run)}
             replaced.add(r['source_id'])
+    # An extra-model run asks the same questions with the same prompt for more models; its replies are added, never replacing the main run's models.
+    for extra in extra_models:
+        assert json.loads((extra / 'manifest.json').read_text())['system_prompt'] == json.loads((run / 'manifest.json').read_text())['system_prompt'], 'extra-model run used a different prompt'
+        rows_x = [json.loads(l) for stage in ('smoke', 'rest') for l in (extra / stage / 'choices.jsonl').open()]
+        rx = [f for stage in ('smoke', 'rest') if (f := extra.with_name(extra.name + '_redraw') / stage / 'choices.jsonl').exists()]
+        add = {(r['source_id'], r['model'], r['draw']): r for r in rows_x}
+        for f in rx:
+            for r in map(json.loads, f.open()):
+                k = (r['source_id'], r['model'], r['draw'])
+                if add[k]['status'] != 'ok':
+                    add[k] = r | {'redraw_of_invalid': True}
+        assert not {m for _, m, _ in add} & {m for _, m, _ in best}, 'extra-model run repeats a main-run model'
+        best.update(add)
     # A provider content-policy block is a recorded refusal, not a score: that draw is dropped and listed; any other failure stops.
     refused = sorted(k for k, r in best.items() if r['status'] == 'api_refusal' or (r['status'] == 'infrastructure_error' and 'PROHIBITED_CONTENT' in json.dumps(r.get('error'))))
     bad = [k for k, r in best.items() if r['status'] != 'ok' and k not in refused]
@@ -42,7 +55,7 @@ def export(run: Path, repairs: list[Path] = ()) -> Path:
         by[sid][m].append({'draw': d, 'probabilities': r['original_probabilities'], 'reasoning': r['reasoning'], 'setup_note': r['setup_note']})
     out = run / 'question_tables.jsonl'
     with out.open('w') as f:
-        f.write(json.dumps({'_meta': {'author': 'PI/OpenAI', 'run': str(run), 'dimensions': dims, 'provider_refusals': [list(k) for k in refused], 'repair_runs': [str(x) for x in repairs], 'repaired_questions': sorted(replaced)}}) + '\n')
+        f.write(json.dumps({'_meta': {'author': 'PI/OpenAI', 'run': str(run), 'dimensions': dims, 'provider_refusals': [list(k) for k in refused], 'repair_runs': [str(x) for x in repairs], 'repaired_questions': sorted(replaced), 'extra_model_runs': [str(x) for x in extra_models]}}) + '\n')
         for sid, s in scenes.items():
             opts = list(s['choice_text'])
             models = {m: {'draws': sorted(v, key=lambda x: x['draw']),
@@ -57,5 +70,6 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--run', type=Path, required=True)
     parser.add_argument('--repair', type=Path, nargs='*', default=[], help='runs that re-asked whole questions with a repaired prompt; their replies replace the main run\'s')
+    parser.add_argument('--extra-models', type=Path, nargs='*', default=[], help='runs with the same prompt and questions for additional models')
     a = parser.parse_args()
-    export(a.run, a.repair)
+    export(a.run, a.repair, a.extra_models)
