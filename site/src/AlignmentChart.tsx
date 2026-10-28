@@ -15,7 +15,7 @@ export type DndData = { sources: Record<'daily_dilemmas' | 'machiavelli', Source
 
 export const COLORS: Record<string, string> = { Muse: '#0467DF', Qwen: '#6950EF', Gemini: '#E37400', Luna: '#111111', Haiku: '#8C4A2F', DeepSeek: '#6f6f6f' }
 const LOGOS: Record<string, string> = { Muse: 'meta', Qwen: 'qwen', Gemini: 'google', Luna: 'openai', Haiku: 'anthropic', DeepSeek: 'deepseek' }
-const FULL: Record<string, string> = { Muse: 'Meta Muse Spark 1.3', Qwen: 'Qwen 3.8 27B', Gemini: 'Google Gemini 3.8 Flash', Luna: 'OpenAI GPT-5.6 Luna', Haiku: 'Anthropic Claude Haiku 5.5', DeepSeek: 'DeepSeek v4.1 Flash (reference)' }
+export const FULL: Record<string, string> = { Muse: 'Meta Muse Spark 1.3', Qwen: 'Qwen 3.8 27B', Gemini: 'Google Gemini 3.8 Flash', Luna: 'OpenAI GPT-5.6 Luna', Haiku: 'Anthropic Claude Haiku 5.5', DeepSeek: 'DeepSeek v4.1 Flash (reference)' }
 // Run metadata for tooltips: OpenRouter id, reasoning request, mean tokens per answer and cost of the 1,000-question v12 run (2 answers each).
 const META: Record<string, { slug: string; inTok: number; outTok: number; reasoningTok: number; cost: number }> = {
   DeepSeek: { slug: 'deepseek/deepseek-v4.1-flash', inTok: 685, outTok: 749, reasoningTok: 565, cost: .70 },
@@ -25,7 +25,7 @@ const META: Record<string, { slug: string; inTok: number; outTok: number; reason
   Luna: { slug: 'openai/gpt-5.6-luna', inTok: 726, outTok: 215, reasoningTok: 80, cost: .81 },
   Haiku: { slug: 'anthropic/claude-haiku-5.5', inTok: 1340, outTok: 308, reasoningTok: 20, cost: .58 },
 }
-const meta = (n: string) => { const m = META[n]; return `${m.slug}\nreasoning budget 10k tokens; per answer ${m.inTok} in, ${m.outTok} out (${m.reasoningTok} reasoning)\nrun cost $${m.cost.toFixed(2)} for 2,000 answers` }
+export const meta = (n: string) => { const m = META[n]; return `${m.slug}\nreasoning budget 10k tokens; per answer ${m.inTok} in, ${m.outTok} out (${m.reasoningTok} reasoning)\nrun cost $${m.cost.toFixed(2)} for 2,000 answers` }
 const INK = '#2f2e2a'
 const f2 = (v: number) => `${v >= 0 ? '+' : '−'}${Math.abs(v).toFixed(2)}`
 const REPO = 'github.com/wassname/virtue-choices'
@@ -98,7 +98,7 @@ function placeLabels(pts: { name: string; x: number; y: number }[]) {
   })
 }
 
-const Z = 640, R = .2, ZK = (Z / 2 - 24) / R  // zoom square, ±R nats, px per nat
+const Z = 720, R = .2, ZK = (Z / 2 - 24) / R  // zoom square, ±R nats, px per nat
 export function Zoom({ title, src }: { title: string; src: SourceData }) {
   const [hover, setHover] = useState<string | null>(null)
   const x = 50, y = 50
@@ -111,10 +111,10 @@ export function Zoom({ title, src }: { title: string; src: SourceData }) {
   const key = src.models[src.key_model].ci95_refit
   const kw = ((key[0][1] - key[0][0]) + (key[1][1] - key[1][0])) / 2 * ZK
   const parts = (['questions', 'calibration', 'answers'] as const).map(n => [n, (src.variance_shares[n][0] + src.variance_shares[n][1]) / 2] as const)
-  const kx = x + Z + 50, ky = y + 60, cy = ky + 30
+  const kx = x, ky = y + Z + 64, cy = ky + 22  // small key under the zoom
   let bx = kx
   return (
-    <svg viewBox={`0 0 ${kx + 420} ${y + Z + 50}`} width="100%" role="img" aria-label={`${title}: each model compared with DeepSeek`}>
+    <svg viewBox={`0 0 ${x + Z + 20} ${y + Z + 140}`} width="100%" role="img" aria-label={`${title}: each model compared with DeepSeek`}>
       <text x={x} y={y - 16} fontSize={24} fill={INK}>{title}, each model vs DeepSeek</text>
       <defs>
         <linearGradient id={`zoomGE-${title.replace(/\W/g, "")}`} x1="0" y1="0" x2="0" y2="1">
@@ -123,22 +123,12 @@ export function Zoom({ title, src }: { title: string; src: SourceData }) {
       </defs>
       <rect x={x} y={y} width={Z} height={Z} fill={`url(#zoomGE-${title.replace(/\W/g, "")})`} stroke={INK} strokeWidth={1.5} />
       {/* corners as directions relative to DeepSeek, in the 1979 graph's words */}
-      {([[x + 12, y + 30, 'more saintly', 'start'], [x + Z - 12, y + 30, 'more beatific', 'end'], [x + 12, y + Z - 40, 'more diabolic', 'start'], [x + Z - 12, y + Z - 40, 'more demoniac', 'end']] as const).map(([tx, ty, w, a]) =>
+      {([[x + 12, y + 30, 'more saintly', 'start'], [x + Z - 12, y + 30, 'more beatific', 'end'], [x + 12, y + Z - 16, 'more diabolic', 'start'], [x + Z - 12, y + Z - 16, 'more demoniac (towards neutral)', 'end']] as const).map(([tx, ty, w, a]) =>
         <text key={w} x={tx} y={ty} fontSize={19} fontStyle="italic" fontFamily="Georgia, serif" fill="#55534a" textAnchor={a}>{w}</text>)}
       <line x1={x} x2={x + Z} y1={iy(0)} y2={iy(0)} stroke="#bdbab0" />
       <line y1={y} y2={y + Z} x1={ix(0)} x2={ix(0)} stroke="#bdbab0" />
-      {(() => {  // which way neutral (the even split, centre of Figure 1) lies from DeepSeek: display x = -lawful, y = -good
-        const [l, g] = src.deepseek_anchor, d = Math.hypot(l, g), ux = l / d, uy = g / d, L = 70
-        const x1 = x + Z + 60, y1 = y + 300, x2 = x1 + ux * L, y2 = y1 + uy * L  // off the graph, beside it
-        return <g stroke={INK} fill={INK}>
-          <defs><marker id={`arr-${title.replace(/\W/g, "")}`} viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" /></marker></defs>
-          <line x1={x1} y1={y1} x2={x2} y2={y2} strokeWidth={1.6} markerEnd={`url(#arr-${title.replace(/\W/g, "")})`} />
-          <text x={x2 + 8} y={y2 + 6} fontSize={16} stroke="none">towards neutral</text>
-        </g>
-      })()}
-      <text x={x + 10} y={y + Z - 12} fontSize={16} fill={INK}>← more lawful</text>
-      <text x={x + Z - 10} y={y + Z - 12} fontSize={16} fill={INK} textAnchor="end">more chaotic →</text>
-      <text x={ix(0) + 8} y={y + 24} fontSize={16} fill={INK}>more good ↑</text>
+      <text x={x + Z / 2} y={y + Z + 30} fontSize={19} fill={INK} textAnchor="middle">← more lawful | more chaotic →</text>
+      <text x={x - 16} y={y + Z / 2} fontSize={19} fill={INK} textAnchor="middle" transform={`rotate(-90 ${x - 16} ${y + Z / 2})`}>← less good | more good →</text>
       {shown && <g stroke={COLORS[hover!]} strokeWidth={2.5} opacity={.6}>
         <line x1={ix(shown.ci95_refit[0][0])} x2={ix(shown.ci95_refit[0][1])} y1={iy(shown.offset[1])} y2={iy(shown.offset[1])} />
         <line x1={ix(shown.offset[0])} x2={ix(shown.offset[0])} y1={iy(shown.ci95_refit[1][0])} y2={iy(shown.ci95_refit[1][1])} /></g>}
@@ -154,13 +144,13 @@ export function Zoom({ title, src }: { title: string; src: SourceData }) {
           </g>
         )
       })}
-      <text x={x + Z - 10} y={y + Z + 20} fontSize={14} fill={INK} textAnchor="end">±{R} nats</text>
-      <text x={kx} y={ky} fontSize={18} fill={INK}>uncertainty (95%, typical model)</text>
+      <text x={x + Z} y={y + Z + 30} fontSize={14} fill={INK} textAnchor="end">±{R} nats</text>
+      <text x={kx} y={ky} fontSize={15} fill={INK}>uncertainty (95%, typical model)</text>
       <g stroke={INK} strokeWidth={1.6}><line x1={kx} x2={kx + kw} y1={cy} y2={cy} /><line x1={kx} x2={kx} y1={cy - 7} y2={cy + 7} /><line x1={kx + kw} x2={kx + kw} y1={cy - 7} y2={cy + 7} /></g>
       {parts.map(([n, f]) => { const len = f * kw, g = <g key={n}>
         <path d={`M${bx + 1},${cy + 16} v8 h${len - 2} v-8`} fill="none" stroke={INK} />
         <title>{`${n}: about ${Math.round(100 * f)}% of the uncertainty`}</title></g>; bx += len; return g })}
-      {parts.map(([n, f], i) => <text key={n} x={kx} y={cy + 48 + 22 * i} fontSize={16} fill={INK}>{n} {Math.round(100 * f)}%</text>)}
+      <text x={kx} y={cy + 44} fontSize={14} fill={INK}>{parts.map(([n, f]) => `${n} ${Math.round(100 * f)}%`).join(' · ')}</text>
     </svg>
   )
 }

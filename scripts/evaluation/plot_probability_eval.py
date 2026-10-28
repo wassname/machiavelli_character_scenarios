@@ -757,14 +757,17 @@ def plot_style_spider(lines: list[dict], basis: dict, groups: dict, maps: dict, 
                 ax.plot(*ring(t), color='#d6d3c9', lw=.7, zorder=1)
             ax.plot(*ring(0), color='#333333', lw=.8, ls='--')
             ax.yaxis.grid(False)
-            spider = ax.inset_axes([.45, .45, .1, .1])  # a small spider at the hub
+            spider = ax.inset_axes([.44, .44, .12, .12])  # a small spider at the hub
             spider.set_axis_off()
             spider.set(xlim=(-1, 1), ylim=(-1, 1), aspect='equal')
+            for side in (-1, 1):  # four legs a side from the head, knees up, feet out
+                for ay, (kx, ky), (fx, fy) in ((.32, (.45, .75), (.85, .95)), (.26, (.6, .45), (.98, .3)), (.2, (.6, .1), (.98, -.25)), (.14, (.45, -.2), (.75, -.65))):
+                    spider.plot([side * .08, side * kx, side * fx], [ay, ky, fy], color='#333333', lw=1.2, solid_capstyle='round')
+                spider.plot([side * .05, side * .09], [.4, .5], color='#333333', lw=1.6, solid_capstyle='round')  # fangs
+            spider.add_patch(matplotlib.patches.Circle((0, -.32), .36, color='#333333'))  # abdomen
+            spider.add_patch(matplotlib.patches.Circle((0, .24), .17, color='#333333'))  # head
             for side in (-1, 1):
-                for ay, (kx, ky), (fx, fy) in ((.15, (.45, .6), (.8, .9)), (.05, (.6, .35), (.95, .2)), (-.1, (.6, -.05), (.95, -.4)), (-.25, (.45, -.4), (.7, -.85))):
-                    spider.plot([0, side * kx, side * fx], [ay, ky, fy], color='#333333', lw=1.1, solid_capstyle='round')
-            spider.add_patch(matplotlib.patches.Ellipse((0, -.15), .4, .55, color='#333333'))
-            spider.add_patch(matplotlib.patches.Circle((0, .25), .16, color='#333333'))
+                spider.add_patch(matplotlib.patches.Circle((side * .06, .28), .035, color='white'))  # eyes
             ax.set_ylim(-r_in, r_out)
             ax.set_yticks(np.log1p(np.array(pct) / 100), [f'{q:+d}%' if q else '0' for q in pct])
             ax.set_theta_offset(np.pi / 2)
@@ -777,6 +780,11 @@ def plot_style_spider(lines: list[dict], basis: dict, groups: dict, maps: dict, 
         fig.savefig(paths[-1], dpi=110)
         plt.close(fig)
     table = tabulate(rows, headers=['Source', 'Model'] + names, tablefmt='html')
+    rnd = lambda a: [round(float(v), 4) for v in a]
+    (out / 'spider.json').write_text(json.dumps({'author': 'PI/OpenAI', 'unit': 'nats; leftover virtue-group preference once overall goodness is removed', 'groups': names,
+        'sources': {src: {'deepseek_absolute': rnd(anchor[src]),
+                          'models': {('DeepSeek repeat' if m == 'DeepSeek repeat' else short(m)): {'vs_deepseek': rnd(res[src][0][j]), 'lo': rnd(res[src][1][j]), 'hi': rnd(res[src][2][j])}
+                                     for j, m in enumerate(models + ['DeepSeek repeat'])}} for src in SOURCES}}, indent=1) + '\n')
     return paths, table
 
 

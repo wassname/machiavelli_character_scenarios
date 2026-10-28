@@ -8,3 +8,5 @@ table { border-collapse: collapse; font-size: 14px; margin: 8px 0 20px; }
 td, th { padding: 3px 10px; border-bottom: 1px solid #ddd; text-align: left; }
 h2 { margin-top: 48px; }
 blockquote.prompt { margin: 8px 0 16px; padding: 8px 16px; background: #f6f4ec; border-left: 3px solid #cfcab8; font-size: 15px; }
+h3 { font-weight: 500; font-size: 18px; margin: 18px 0 0; color: #333; }
+.legend { margin: 4px 0 8px; font-size: 15px; }

@@ -1,6 +1,8 @@
 import { Overview, Zoom, type DndData } from './AlignmentChart'
 import raw from './data/dnd_web.json'
 import rc from './data/rules_consistency.json'
+import spider from './data/spider.json'
+import Spider, { type SpiderData } from './Spider'
 
 // Data: outputs/20261027_random1000_v12/calibration_heldout/dnd_web.json and the page build's rules_consistency.json + figures, copied by `just site-build`.
 // Order (wassname, AGENTS.md "Results narrative"): the narrative first, linking to numbered figures; the figures follow, each with its caption directly under it. -- PI/OpenAI
@@ -41,10 +43,13 @@ export default function App() {
         <figcaption><b>Figure 3. Everyday dilemmas, zoomed in</b> (500 dilemmas from <a href="https://arxiv.org/abs/2410.02683">DailyDilemmas</a>, <a href="https://huggingface.co/datasets/wassname/virtue-choices">virtue-choices</a> dataset). Muse picks slightly less good options than DeepSeek; the other differences are within the uncertainty.</figcaption>
       </figure>
       <figure id="fig4">
-        <img src="figures/style_spider_absolute.png" alt="Kinds of good, against an even split" width="100%" />
-        <img src="figures/style_spider.png" alt="Kinds of good, compared with DeepSeek" width="100%" />
-        <figcaption><b>Figure 4. Kinds of good, once overall goodness is removed.</b> Top: against an even split; all six share one shape, high on wisdom and inquiry. Bottom: compared with DeepSeek (dashed ring); Luna leans towards truthfulness and inquiry over kindness and forbearance.
-          <span className="footnote">Rings: % higher or lower odds. Filled dot: 95% interval excludes DeepSeek.</span></figcaption>
+        <h3>4a. Against an even split (absolute)</h3>
+        <Spider data={spider as SpiderData} absolute={true} />
+        <h3>4b. Compared with DeepSeek (relative)</h3>
+        <Spider data={spider as SpiderData} absolute={false} />
+        <figcaption><b>Figure 4. Kinds of good, once overall goodness is removed.</b> 4a: against a chooser that splits its percentages evenly (dashed ring); all six share one shape, high on wisdom and inquiry.
+          4b: the same numbers minus DeepSeek's (dashed ring = DeepSeek); Luna leans towards truthfulness and inquiry over kindness and forbearance. Hover a line or the legend to highlight a model; hover a dot for its value and 95% interval.
+          <span className="footnote">Rings: % higher or lower odds. Filled dot: 95% interval excludes DeepSeek. Spokes are ordered so groups that move together sit side by side.</span></figcaption>
       </figure>
       <figure id="fig5">
         <img src="figures/role_play.png" alt="Role-play check" width="100%" />
