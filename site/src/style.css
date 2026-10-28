@@ -1,5 +1,10 @@
-body { font: 16px/1.5 system-ui, sans-serif; color: #222; margin: 0; background: #fdfcf7; }
+body { font: 17px/1.55 system-ui, sans-serif; color: #222; margin: 0; background: #fdfcf7; }
 main { max-width: 1100px; margin: 24px auto; padding: 0 20px; }
-figure { margin: 0 0 24px; }
-figcaption { font-size: 14px; color: #444; max-width: 860px; }
-.footnote { font-size: 12px; color: #777; margin-top: 6px; }
+main > p { max-width: 780px; }
+figure { margin: 48px 0; padding-top: 12px; border-top: 1px solid #e3e0d4; scroll-margin-top: 16px; }
+figcaption { font-size: 15px; color: #444; max-width: 860px; margin-top: 8px; padding-left: 12px; border-left: 3px solid #d9d5c7; }
+.footnote { display: block; font-size: 13px; color: #777; margin-top: 4px; }
+table { border-collapse: collapse; font-size: 14px; margin: 8px 0 20px; }
+td, th { padding: 3px 10px; border-bottom: 1px solid #ddd; text-align: left; }
+h2 { margin-top: 48px; }
+blockquote.prompt { margin: 8px 0 16px; padding: 8px 16px; background: #f6f4ec; border-left: 3px solid #cfcab8; font-size: 15px; }

@@ -997,6 +997,9 @@ def page_random(tables: Path, out: Path, title: str) -> Path:
     rules_table = tabulate(rules_rows, headers=['Source', 'Model', 'Toward the lawful option', 'Toward the good option', 'Questions where they differ'], tablefmt='html')
     cons_table = tabulate([[n, f'{a:+.2f}', f'{b:+.2f}', f'{c:+.2f}'] for n, (a, b, c) in rc['consistency'].items()],
                           headers=['Model', 'Two halves, everyday', 'Two halves, games', 'Everyday vs games'], tablefmt='html')
+    (out / 'rules_consistency.json').write_text(json.dumps({'author': 'PI/OpenAI', 'rules_headers': ['Source', 'Model', 'Toward the lawful option', 'Toward the good option', 'Questions where they differ'], 'rules': rules_rows,
+                                                         'consistency_headers': ['Model', 'Two halves, everyday', 'Two halves, games', 'Everyday vs games'],
+                                                         'consistency': [[n, round(float(a), 2), round(float(b), 2), round(float(c), 2)] for n, (a, b, c) in rc['consistency'].items()]}, indent=1) + '\n')
     everest = rp['everest_take_slot']
     qs = lines[1:]
     qs = sorted(qs, key=lambda q: hashlib.sha256(('example:' + q['source_id']).encode()).hexdigest())

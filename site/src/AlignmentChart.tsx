@@ -107,18 +107,35 @@ export function Zoom({ title, src }: { title: string; src: SourceData }) {
   const rows: [string, Pair][] = [['DeepSeek', [0, 0]], ...Object.entries(src.models).map(([n, r]) => [n, r.offset] as [string, Pair])]
   const labels = placeLabels(rows.map(([n, [l, g]]) => ({ name: n, x: ix(l), y: iy(g) })))
   const shown = hover && hover !== 'DeepSeek' ? src.models[hover] : null
-  // off-graph uncertainty key, same scale: one typical model's 95% interval; braces = rough share of its width by source
+  // off-graph uncertainty key, same scale: one typical model's 95% interval (mean of the two axes, which are about equal); braces = rough share of its width by source
   const key = src.models[src.key_model].ci95_refit
-  const kw = (key[0][1] - key[0][0]) * ZK, kh = (key[1][1] - key[1][0]) * ZK
-  const parts = (['questions', 'calibration', 'answers'] as const).map(n => [n, src.variance_shares[n][0]] as const)
-  const kx = x + Z + 50, ky = y + 60, cx = kx + kw / 2, cy = ky + 30 + kh / 2
+  const kw = ((key[0][1] - key[0][0]) + (key[1][1] - key[1][0])) / 2 * ZK
+  const parts = (['questions', 'calibration', 'answers'] as const).map(n => [n, (src.variance_shares[n][0] + src.variance_shares[n][1]) / 2] as const)
+  const kx = x + Z + 50, ky = y + 60, cy = ky + 30
   let bx = kx
   return (
     <svg viewBox={`0 0 ${kx + 420} ${y + Z + 50}`} width="100%" role="img" aria-label={`${title}: each model compared with DeepSeek`}>
       <text x={x} y={y - 16} fontSize={24} fill={INK}>{title}, each model vs DeepSeek</text>
-      <rect x={x} y={y} width={Z} height={Z} fill="#ffffff" stroke={INK} strokeWidth={1.2} />
+      <defs>
+        <linearGradient id={`zoomGE-${title.replace(/\W/g, "")}`} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stopColor="#eaf1e4" /><stop offset=".5" stopColor="#fbf9f3" /><stop offset="1" stopColor="#f6e9e5" />
+        </linearGradient>
+      </defs>
+      <rect x={x} y={y} width={Z} height={Z} fill={`url(#zoomGE-${title.replace(/\W/g, "")})`} stroke={INK} strokeWidth={1.5} />
+      {/* corners as directions relative to DeepSeek, in the 1979 graph's words */}
+      {([[x + 12, y + 30, 'more saintly', 'start'], [x + Z - 12, y + 30, 'more beatific', 'end'], [x + 12, y + Z - 40, 'more diabolic', 'start'], [x + Z - 12, y + Z - 40, 'more demoniac', 'end']] as const).map(([tx, ty, w, a]) =>
+        <text key={w} x={tx} y={ty} fontSize={19} fontStyle="italic" fontFamily="Georgia, serif" fill="#55534a" textAnchor={a}>{w}</text>)}
       <line x1={x} x2={x + Z} y1={iy(0)} y2={iy(0)} stroke="#bdbab0" />
       <line y1={y} y2={y + Z} x1={ix(0)} x2={ix(0)} stroke="#bdbab0" />
+      {(() => {  // which way neutral (the even split, centre of Figure 1) lies from DeepSeek: display x = -lawful, y = -good
+        const [l, g] = src.deepseek_anchor, d = Math.hypot(l, g), ux = l / d, uy = g / d, L = 70
+        const x1 = x + Z + 60, y1 = y + 300, x2 = x1 + ux * L, y2 = y1 + uy * L  // off the graph, beside it
+        return <g stroke={INK} fill={INK}>
+          <defs><marker id={`arr-${title.replace(/\W/g, "")}`} viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" /></marker></defs>
+          <line x1={x1} y1={y1} x2={x2} y2={y2} strokeWidth={1.6} markerEnd={`url(#arr-${title.replace(/\W/g, "")})`} />
+          <text x={x2 + 8} y={y2 + 6} fontSize={16} stroke="none">towards neutral</text>
+        </g>
+      })()}
       <text x={x + 10} y={y + Z - 12} fontSize={16} fill={INK}>← more lawful</text>
       <text x={x + Z - 10} y={y + Z - 12} fontSize={16} fill={INK} textAnchor="end">more chaotic →</text>
       <text x={ix(0) + 8} y={y + 24} fontSize={16} fill={INK}>more good ↑</text>
@@ -137,13 +154,13 @@ export function Zoom({ title, src }: { title: string; src: SourceData }) {
           </g>
         )
       })}
-      <text x={x + Z - 10} y={y + 24} fontSize={14} fill={INK} textAnchor="end">±{R} nats</text>
+      <text x={x + Z - 10} y={y + Z + 20} fontSize={14} fill={INK} textAnchor="end">±{R} nats</text>
       <text x={kx} y={ky} fontSize={18} fill={INK}>uncertainty (95%, typical model)</text>
-      <g stroke={INK} strokeWidth={1.6}><line x1={cx - kw / 2} x2={cx + kw / 2} y1={cy} y2={cy} /><line x1={cx} x2={cx} y1={cy - kh / 2} y2={cy + kh / 2} /></g>
+      <g stroke={INK} strokeWidth={1.6}><line x1={kx} x2={kx + kw} y1={cy} y2={cy} /><line x1={kx} x2={kx} y1={cy - 7} y2={cy + 7} /><line x1={kx + kw} x2={kx + kw} y1={cy - 7} y2={cy + 7} /></g>
       {parts.map(([n, f]) => { const len = f * kw, g = <g key={n}>
-        <path d={`M${bx + 1},${cy + kh / 2 + 14} v8 h${len - 2} v-8`} fill="none" stroke={INK} />
+        <path d={`M${bx + 1},${cy + 16} v8 h${len - 2} v-8`} fill="none" stroke={INK} />
         <title>{`${n}: about ${Math.round(100 * f)}% of the uncertainty`}</title></g>; bx += len; return g })}
-      {parts.map(([n, f], i) => <text key={n} x={kx} y={cy + kh / 2 + 46 + 22 * i} fontSize={16} fill={INK}>{n} {Math.round(100 * f)}%</text>)}
+      {parts.map(([n, f], i) => <text key={n} x={kx} y={cy + 48 + 22 * i} fontSize={16} fill={INK}>{n} {Math.round(100 * f)}%</text>)}
     </svg>
   )
 }
