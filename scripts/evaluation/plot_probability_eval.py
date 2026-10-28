@@ -727,10 +727,12 @@ def plot_style_spider(lines: list[dict], basis: dict, groups: dict, maps: dict, 
             R = X - np.outer(X @ v1, v1)
             return np.stack([R[:, ix].mean(1) for ix in gidx], 1)
         res[src] = nats_core(lines, src, resid, maps, fold)
-    lim = 1.15 * max(np.nanmax(np.abs(r[0])) for r in res.values())  # one radial scale for both panels
+    r_in = 1.1 * max(-np.nanmin(r[0]) for r in res.values())  # one radial scale for both panels, from the lowest to the highest point
+    r_out = 1.15 * max(np.nanmax(r[0]) for r in res.values())
+    pct = [p for p in (-30, -20, -10, 0, 10, 20, 30, 40) if -r_in < np.log1p(p / 100) < r_out]  # ticks as % change in odds vs DeepSeek
     for ax, (src, name) in zip(axs, SOURCES.items()):
         point, lo, hi, n, _ = res[src]
-        ax.fill_between(np.linspace(0, 2 * np.pi, 200), -lim, 0, color='#f4f4f4', zorder=0)
+        ax.fill_between(np.linspace(0, 2 * np.pi, 200), -r_in, 0, color='#f4f4f4', zorder=0)
         for j, m in enumerate(models + ['DeepSeek repeat']):
             self_ = m == 'DeepSeek repeat'
             col = COLORS[short(m)]
@@ -741,14 +743,15 @@ def plot_style_spider(lines: list[dict], basis: dict, groups: dict, maps: dict, 
             ax.scatter(angle[~sig], v[~sig], facecolor='white', edgecolor=col, s=18, zorder=3)
             rows.append([name, short(m)] + [fmt(v[k], lo[j, k], hi[j, k], self_) for k in range(len(names))])
         ax.plot(np.linspace(0, 2 * np.pi, 200), np.zeros(200), color='#333333', lw=.8, ls='--')
-        ax.set_ylim(-lim, lim)
+        ax.set_ylim(-r_in, r_out)
+        ax.set_yticks(np.log1p(np.array(pct) / 100), [f'{p:+d}%' if p else '0' for p in pct])
         ax.set_theta_offset(np.pi / 2)
         ax.set_theta_direction(-1)
         ax.set_xticks(angle, names, fontsize=10)
         ax.tick_params(axis='y', labelsize=7)
         ax.set_title(name, pad=22)
     axs[1].legend(loc='upper left', bbox_to_anchor=(1.05, 1.05), frameon=False, fontsize=9)
-    fig.suptitle('Dashed ring = DeepSeek. Outside the ring = favours that kind of virtue more than DeepSeek, beyond overall goodness (nats).\nFilled dot = 95% interval excludes DeepSeek (grey: outside DeepSeek\'s own run-to-run range).', fontsize=10)
+    fig.suptitle('Dashed ring = DeepSeek. Outside the ring = favours that kind of virtue more than DeepSeek, beyond overall goodness.\nRings: % higher or lower odds than DeepSeek. Filled dot = 95% interval excludes DeepSeek (grey: outside DeepSeek\'s own run-to-run range).', fontsize=10)
     path = out / 'style_spider.png'
     fig.savefig(path, dpi=110)
     plt.close(fig)
@@ -814,6 +817,61 @@ def plot_role_play(rp: dict, out: Path) -> Path:
     return path
 
 
+def plot_goodness_absolute(lines: list[dict], basis: dict, maps: dict, fold: dict, out: Path) -> tuple[Path, dict]:
+    # Step 2, absolute: log-odds toward the more good option (PC1) against a chooser that splits % evenly (0 = no preference), same pair formula as nats_core with delta = log p_model.
+    # Filled = calibrated onto DeepSeek's spread (so hedging is not read as values); hollow = the model's own uncalibrated percentages. Intervals: games/topics bootstrap, calibrated only.
+    ds = 'deepseek/deepseek-v4.1-flash'
+    models = [ds] + [m for m in lines[1]['models'] if m != ds]
+    fig, axs = plt.subplots(1, 2, figsize=(11, 4.1), constrained_layout=True)
+    rng = np.random.default_rng(20261028)
+    stats, order = {}, None
+    for ax, (src, sname) in zip(axs[::-1], list(SOURCES.items())[::-1]):  # games first, to fix one model order for both panels
+        V = basis['src'][src]['V'][0]
+        num_cal, num_raw, den, groups = [], [], [], []
+        for q in lines[1:]:
+            if q['source'] != src or set(models) - set(q['models']) or any(len(q['models'][m]['draws']) < 2 for m in models):
+                continue
+            o = list(q['options'])
+            x = np.array([q['option_scores'][k] for k in o], float)[:, basis['direct']] * basis['fav'] @ V
+            iu = np.triu_indices(len(o), 1)
+            dx = x[iu[0]] - x[iu[1]]
+            w = np.abs(dx) * np.sign(dx)
+            raw = lambda m: np.mean([np.log(np.array([d['probabilities'][k] for k in o], float) + 1) for d in q['models'][m]['draws'][:2]], 0)
+            num_cal.append([(w * (lp[iu[0]] - lp[iu[1]])).sum() for lp in (calibrated_logp(q, m, maps, fold) for m in models)])
+            num_raw.append([(w * (lp[iu[0]] - lp[iu[1]])).sum() for lp in (raw(m) for m in models)])
+            den.append(np.abs(dx).sum())
+            groups.append(q['eval_cluster'])
+        num_cal, num_raw, den = np.array(num_cal), np.array(num_raw), np.array(den)
+        cl = sorted(set(groups))
+        members = [np.flatnonzero(np.array(groups) == c) for c in cl]
+        boot = np.array([num_cal[ix].sum(0) / den[ix].sum() for ix in (np.concatenate([members[c] for c in rng.integers(0, len(cl), len(cl))]) for _ in range(1000))])
+        cal, unc = num_cal.sum(0) / den.sum(), num_raw.sum(0) / den.sum()
+        lo, hi = np.percentile(boot, [2.5, 97.5], 0)
+        order = np.argsort(cal) if order is None else order
+        for y, j in enumerate(order):
+            name = 'DeepSeek' if j == 0 else short(models[j])
+            col = COLORS['DeepSeek repeat'] if j == 0 else COLORS[name]
+            ax.plot([lo[j], hi[j]], [y, y], color=col, lw=1.6)
+            ax.plot(unc[j], y, 'o', mfc='white', mec=col, ms=7, zorder=3)
+            logo(ax, cal[j], y, 'DeepSeek repeat' if j == 0 else name, .14)
+        ax.axvline(0, color='#888888', lw=.8)
+        ax.set_yticks(range(len(order)), ['DeepSeek' if j == 0 else short(models[j]) for j in order])
+        ax.set_title(f'{sname} ({len(den)} questions)', loc='left', fontsize=10)
+        ax.set_xlabel('\u2190 less good  |  more good \u2192   (nats vs an even split; 0 = no preference)', fontsize=9)
+        for sp in ('top', 'right'):
+            ax.spines[sp].set_visible(False)
+        stats[src] = {('DeepSeek' if j == 0 else short(m)): {'calibrated': round(float(cal[j]), 3), 'ci95': [round(float(lo[j]), 3), round(float(hi[j]), 3)], 'uncalibrated': round(float(unc[j]), 3)} for j, m in enumerate(models)}
+    right = 1.08 * max(max(max(v['ci95'][1], v['uncalibrated']) for v in st.values()) for st in stats.values())
+    for ax in axs:
+        ax.set_xlim(-.1, right)
+    axs[0].plot([], [], 'o', mfc='white', mec='#555555', label="model's own percentages, before rescaling to DeepSeek's spread")
+    fig.legend(fontsize=8, frameon=False, loc='outside lower center')
+    path = out / 'goodness_absolute.png'
+    fig.savefig(path, dpi=110)
+    plt.close(fig)
+    return path, stats
+
+
 def plot_goodness(lines: list[dict], basis: dict, maps: dict, fold: dict, out: Path) -> Path:
     # Step 2: overall goodness (PC1 of the virtue labels) per model, calibrated nats vs DeepSeek with 95% intervals; grey band = DeepSeek's own run-to-run range.
     ds = 'deepseek/deepseek-v4.1-flash'
@@ -869,6 +927,7 @@ def page_random(tables: Path, out: Path, title: str) -> Path:
     calib_png = calibration_before_after(tables, out)
     grid_pngs, dnd_table = nats_per_label(tables, out)
     goodness_png = plot_goodness(lines, basis, maps, fold, out)
+    goodness_abs_png, goodness_abs = plot_goodness_absolute(lines, basis, maps, fold, out)
     rp = json.loads((tables.parent / 'role_play_probes.json').read_text())
     role_png = plot_role_play(rp, out)
     from rules_and_consistency import analyse  # imports this module, so imported here
@@ -940,6 +999,9 @@ def page_random(tables: Path, out: Path, title: str) -> Path:
               'Each logo is a model compared with DeepSeek on the same questions; the line is its 95% interval. +0.1 nats means about 10% higher odds of picking the better option than DeepSeek. '
               'An interval crossing 0 means no shown difference from DeepSeek, not proof of equality. "Good" here means the option the virtue labels score higher, not a moral verdict on the model. '
               'The grey row is DeepSeek against itself (its two answers compared, uncalibrated): it shows how far a model can land from 0 by chance. Calibration itself adds a little noise on game scenarios (+0.014 nats, see Details). One game question is left out for every model because Haiku never gave valid percentages for it.</p>',
+              '<p><b>The same, as absolute positions.</b> Here 0 is a chooser that splits its percentages evenly, so it has no preference. Each model is first rescaled to DeepSeek\'s spread, as above (logo, with 95% interval); '
+              'the hollow circle uses the model\'s own percentages, so a model that hedges sits nearer 0. Every model picks the more good option far more often than an even split would; the differences between them are small next to that.</p>',
+              img(goodness_abs_png),
               '<h2>3. The same answers on the D&D chart: models differ mostly in how good</h2>', img(dnd_png),
               '<p>The same answers scored on the D&D axes: up = picks the more good option, right = picks the more lawful option, compared with DeepSeek at the centre (0, 0). Bars are 95% intervals. '
               'Corner names are directions relative to DeepSeek, not alignments: below 0 means picking less good options than DeepSeek, not being evil. '
