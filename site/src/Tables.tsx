@@ -9,8 +9,8 @@ const Name = ({ m }: { m: string }) => m === 'DeepSeek repeat'
 
 
 const NOTES: Record<string, string> = {
-  Luna: 'clear style that holds in both settings',
-  Haiku: 'stable within each setting, but different between them',
+  Luna: 'same pattern in both settings',
+  Haiku: 'repeats on the same questions, differs between settings',
 }
 export function ConsistencyTable({ rows, draws }: { rows: [string, number, number, number][]; draws: [string, number, number][] }) {
   // One number: correlation of the model's style (66 virtues, overall goodness removed, vs DeepSeek) between game scenes and everyday dilemmas.
