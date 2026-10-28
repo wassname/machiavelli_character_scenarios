@@ -1041,9 +1041,9 @@ def page_random(tables: Path, out: Path, title: str) -> Path:
               'Corner names are directions relative to DeepSeek, not alignments: below 0 means picking less good options than DeepSeek, not being evil. '
               'The good axis here is the D&D label from the source data, not the 66-virtue score of step 2, so the numbers differ slightly. '
               'One model also differs in how lawful: Qwen picks less lawful options than DeepSeek in game scenarios (about as much as it picks less good ones); no model is clearly more lawful.</p>',
-              '<p><b>The same, as absolute positions.</b> Here (0, 0) is a chooser that splits its percentages evenly (neutral). Each point is DeepSeek\'s own position plus the model\'s offset from the chart above, so this is a shift of that chart, with the same intervals. '
+              '<details><summary>The same chart as absolute positions (all models in one small cluster)</summary><p>Here (0, 0) is a chooser that splits its percentages evenly (neutral). Each point is DeepSeek\'s own position plus the model\'s offset from the chart above, so this is a shift of that chart, with the same intervals. '
               + f"DeepSeek sits at lawful {anchor['daily_dilemmas'][0]:+.2f}, good {anchor['daily_dilemmas'][1]:+.2f} on everyday dilemmas and {anchor['machiavelli'][0]:+.2f}, {anchor['machiavelli'][1]:+.2f} on game scenarios: every model is lawful good, and the differences between them are small next to that.</p>"
-              + img(dnd_abs_png) +
+              + img(dnd_abs_png) + '</details>' +
               '<p><b>When the rule and the good deed differ.</b> On the questions where the most lawful option is not the most virtuous one, no model clearly picks the rule more than DeepSeek does. '
               'Gemini (both settings) and Qwen (games) pick the less good option more often, which repeats step 2 on a smaller set of questions; their intervals only just exclude 0.</p>'
               '<details><summary>Numbers</summary>' + rules_table + '</details>',
