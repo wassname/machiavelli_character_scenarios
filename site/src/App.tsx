@@ -14,10 +14,10 @@ export default function App() {
       <figure id="alignment">
         <AlignmentChart data={data} />
         <figcaption>
-          Where each model's choices sit on the alignment graph from the 1979 <i>Dungeon Masters Guide</i>. The centre is a chooser that splits its percentages evenly.
-          All six models sit close together in lawful good; the boxes on the right zoom in on how each differs from DeepSeek, and the grey cross is a typical 95% interval.
-          <div className="footnote">Units: nats (log-odds) toward the more lawful or more good option, on DeepSeek's scale. Region boundaries are illustrative (±3 nats; neutral octagon 0.44).
-          500 everyday dilemmas, 499 game scenarios. The braces split the cross's lawful width into its sources; the sources overlap, so the split is approximate.</div>
+          Right: the alignment graph from the 1979 <i>Dungeon Masters Guide</i>, with its centre at a chooser that splits its percentages evenly. All six models sit close together in lawful good.
+          Left: the two clusters zoomed in, each model compared with DeepSeek. Hover a model for its full name and its own 95% interval.
+          <div className="footnote">Units: nats (log-odds) toward the more lawful or more good option, on DeepSeek's scale; +1 nat is about 2.7 times the odds. Region boundaries are illustrative (±3 nats; neutral octagon 0.44).
+          500 everyday dilemmas, 499 game scenarios. The cross is one typical model's 95% interval, shown as a scale, not a significance test. The braces are rough weights for where its width comes from; the sources overlap, so they are not an exact split.</div>
         </figcaption>
       </figure>
     </main>

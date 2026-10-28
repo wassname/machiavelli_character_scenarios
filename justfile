@@ -121,4 +121,4 @@ site-shot:
     (cd site && exec node_modules/.bin/vite preview --host 127.0.0.1 --port 8083 --strictPort > /dev/null) & server=$!
     trap 'kill $server' EXIT
     sleep 3
-    google-chrome --headless=new --no-sandbox --disable-gpu --hide-scrollbars --window-size=1300,1000 --virtual-time-budget=4000 --screenshot=docs/figures/dnd_alignment.png "http://127.0.0.1:8083/?shot"
+    google-chrome --headless=new --no-sandbox --disable-gpu --hide-scrollbars --window-size=1300,1180 --virtual-time-budget=4000 --screenshot=docs/figures/dnd_alignment.png "http://127.0.0.1:8083/?shot"
