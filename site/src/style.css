@@ -17,3 +17,4 @@ table.results td.num, table.results th.num { text-align: right; font-variant-num
 table.results .ci { color: #888; font-size: 13px; }
 table.results tr.base td { color: #777; border-top: 1px solid #bbb; }
 table.results td.note { color: #555; font-size: 14px; min-width: 260px; }
+table.results td:first-child { min-width: 220px; }
