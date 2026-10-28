@@ -718,8 +718,7 @@ def plot_style_spider(lines: list[dict], basis: dict, groups: dict, maps: dict, 
     names = [list(groups)[i] for i in spoke]
     gidx = [gidx[i] for i in spoke]
     angle = np.linspace(0, 2 * np.pi, len(names), endpoint=False)
-    fig, axs = plt.subplots(1, 2, figsize=(13, 6.2), subplot_kw={'projection': 'polar'}, constrained_layout=True)
-    rows, res = [], {}
+    rows, res, anchor = [], {}, {}
     for src in SOURCES:
         v1 = basis['src'][src]['V'][0]
 
@@ -728,47 +727,57 @@ def plot_style_spider(lines: list[dict], basis: dict, groups: dict, maps: dict, 
             R = X - np.outer(X @ v1, v1)
             return np.stack([R[:, ix].mean(1) for ix in gidx], 1)
         res[src] = nats_core(lines, src, resid, maps, fold)
-    r_in = 1.1 * max(-np.nanmin(r[0]) for r in res.values())  # one radial scale for both panels, from the lowest to the highest point
-    r_out = 1.15 * max(np.nanmax(r[0]) for r in res.values())
-    pct = [p for p in (-30, -20, -10, 0, 10, 20, 30, 40) if -r_in < np.log1p(p / 100) < r_out]  # ticks as % change in odds vs DeepSeek
-    for ax, (src, name) in zip(axs, SOURCES.items()):
-        point, lo, hi, n, _ = res[src]
-        ax.fill_between(np.linspace(0, 2 * np.pi, 200), -r_in, 0, color='#f4f4f4', zorder=0)
-        for j, m in enumerate(models + ['DeepSeek repeat']):
-            self_ = m == 'DeepSeek repeat'
-            col = COLORS[short(m)]
-            v = point[j]
-            ax.plot(np.r_[angle, angle[0]], np.r_[v, v[:1]], color=col, lw=1 if self_ else 1.8, ls=':' if self_ else '-', label=short(m))
-            sig = (v < lo[j]) | (v > hi[j]) if self_ else (lo[j] > 0) | (hi[j] < 0)
-            ax.scatter(angle[sig], v[sig], color=col, s=36, zorder=3)
-            ax.scatter(angle[~sig], v[~sig], facecolor='white', edgecolor=col, s=18, zorder=3)
-            rows.append([name, short(m)] + [fmt(v[k], lo[j, k], hi[j, k], self_) for k in range(len(names))])
-        ring = lambda r: (np.r_[angle, angle[0]], np.full(len(angle) + 1, r))  # straight threads between spokes, like a web
-        for t in np.log1p(np.array(pct) / 100):
-            ax.plot(*ring(t), color='#d6d3c9', lw=.7, zorder=1)
-        ax.plot(*ring(0), color='#333333', lw=.8, ls='--')
-        ax.yaxis.grid(False)
-        spider = ax.inset_axes([.45, .45, .1, .1])  # a small spider at the hub
-        spider.set_axis_off()
-        spider.set(xlim=(-1, 1), ylim=(-1, 1), aspect='equal')
-        for side in (-1, 1):
-            for ay, (kx, ky), (fx, fy) in ((.15, (.45, .6), (.8, .9)), (.05, (.6, .35), (.95, .2)), (-.1, (.6, -.05), (.95, -.4)), (-.25, (.45, -.4), (.7, -.85))):
-                spider.plot([0, side * kx, side * fx], [ay, ky, fy], color='#333333', lw=1.1, solid_capstyle='round')
-        spider.add_patch(matplotlib.patches.Ellipse((0, -.15), .4, .55, color='#333333'))
-        spider.add_patch(matplotlib.patches.Circle((0, .25), .16, color='#333333'))
-        ax.set_ylim(-r_in, r_out)
-        ax.set_yticks(np.log1p(np.array(pct) / 100), [f'{p:+d}%' if p else '0' for p in pct])
-        ax.set_theta_offset(np.pi / 2)
-        ax.set_theta_direction(-1)
-        ax.set_xticks(angle, names, fontsize=10)
-        ax.tick_params(axis='y', labelsize=7)
-        ax.set_title(name, pad=22)
-    axs[1].legend(loc='upper left', bbox_to_anchor=(1.05, 1.05), frameon=False, fontsize=9)
-    path = out / 'style_spider.png'
-    fig.savefig(path, dpi=110)
-    plt.close(fig)
+        anchor[src] = absolute_level(lines, src, resid, ds)  # DeepSeek's own leftover style vs an even split
+    paths = []
+    for absolute in (False, True):  # relative to DeepSeek (the zoom), then absolute: 0 = a chooser that splits its % evenly
+        fig, axs = plt.subplots(1, 2, figsize=(13, 6.2), subplot_kw={'projection': 'polar'}, constrained_layout=True)
+        shift = {src: anchor[src] if absolute else np.zeros(len(names)) for src in SOURCES}
+        vals = [r[0][j] + shift[src] for src, r in res.items() for j in range(len(models))] + ([anchor[src] for src in SOURCES] if absolute else [r[0][-1] for r in res.values()])
+        r_in = 1.1 * max(0.05, -np.nanmin(vals))  # one radial scale for both panels, from the lowest to the highest point
+        r_out = 1.15 * np.nanmax(vals)
+        pct = [q for q in (-40, -30, -20, -10, 0, 10, 20, 30, 40, 50) if -r_in < np.log1p(q / 100) < r_out]  # ticks as % change in odds
+        for ax, (src, name) in zip(axs, SOURCES.items()):
+            point, lo, hi, n, _ = res[src]
+            ax.fill_between(np.linspace(0, 2 * np.pi, 200), -r_in, 0, color='#f4f4f4', zorder=0)
+            series = models + (['DeepSeek'] if absolute else ['DeepSeek repeat'])
+            for j, m in enumerate(series):
+                ref = m in ('DeepSeek', 'DeepSeek repeat')
+                col = COLORS['DeepSeek repeat'] if ref else COLORS[short(m)]
+                v = anchor[src] if m == 'DeepSeek' else point[j] + shift[src]
+                ax.plot(np.r_[angle, angle[0]], np.r_[v, v[:1]], color=col, lw=2.2 if m == 'DeepSeek' else 1 if ref else 1.8, ls=':' if m == 'DeepSeek repeat' else '-', label='DeepSeek' if m == 'DeepSeek' else short(m))
+                if m == 'DeepSeek':
+                    continue
+                sig = (point[j] < lo[j]) | (point[j] > hi[j]) if ref else (lo[j] > 0) | (hi[j] < 0)
+                ax.scatter(angle[sig], v[sig], color=col, s=36, zorder=3)
+                ax.scatter(angle[~sig], v[~sig], facecolor='white', edgecolor=col, s=18, zorder=3)
+                if not absolute:
+                    rows.append([name, short(m)] + [fmt(point[j][k], lo[j, k], hi[j, k], ref) for k in range(len(names))])
+            ring = lambda r: (np.r_[angle, angle[0]], np.full(len(angle) + 1, r))  # straight threads between spokes, like a web
+            for t in np.log1p(np.array(pct) / 100):
+                ax.plot(*ring(t), color='#d6d3c9', lw=.7, zorder=1)
+            ax.plot(*ring(0), color='#333333', lw=.8, ls='--')
+            ax.yaxis.grid(False)
+            spider = ax.inset_axes([.45, .45, .1, .1])  # a small spider at the hub
+            spider.set_axis_off()
+            spider.set(xlim=(-1, 1), ylim=(-1, 1), aspect='equal')
+            for side in (-1, 1):
+                for ay, (kx, ky), (fx, fy) in ((.15, (.45, .6), (.8, .9)), (.05, (.6, .35), (.95, .2)), (-.1, (.6, -.05), (.95, -.4)), (-.25, (.45, -.4), (.7, -.85))):
+                    spider.plot([0, side * kx, side * fx], [ay, ky, fy], color='#333333', lw=1.1, solid_capstyle='round')
+            spider.add_patch(matplotlib.patches.Ellipse((0, -.15), .4, .55, color='#333333'))
+            spider.add_patch(matplotlib.patches.Circle((0, .25), .16, color='#333333'))
+            ax.set_ylim(-r_in, r_out)
+            ax.set_yticks(np.log1p(np.array(pct) / 100), [f'{q:+d}%' if q else '0' for q in pct])
+            ax.set_theta_offset(np.pi / 2)
+            ax.set_theta_direction(-1)
+            ax.set_xticks(angle, names, fontsize=10)
+            ax.tick_params(axis='y', labelsize=7)
+            ax.set_title(name, pad=22)
+        axs[1].legend(loc='upper left', bbox_to_anchor=(1.05, 1.05), frameon=False, fontsize=9)
+        paths.append(out / ('style_spider_absolute.png' if absolute else 'style_spider.png'))
+        fig.savefig(paths[-1], dpi=110)
+        plt.close(fig)
     table = tabulate(rows, headers=['Source', 'Model'] + names, tablefmt='html')
-    return path, table
+    return paths, table
 
 
 def absolute_level(lines: list[dict], src: str, label_fn, model: str) -> np.ndarray:
@@ -965,7 +974,7 @@ def page_random(tables: Path, out: Path, title: str) -> Path:
                     for src, sname in SOURCES.items() for k in range(3)]
     pattern_table = tabulate(pattern_rows, headers=['Source', 'Pattern', 'Share of label variation', 'Options high on it show more', 'Options low on it show more'], tablefmt='html')
     overall_png, overall_table = plot_pc_scatter(lines, basis, maps, identity, fold, out)
-    spider_png, spider_table = plot_style_spider(lines, basis, groups, maps, fold, out)
+    (spider_png, spider_abs_png), spider_table = plot_style_spider(lines, basis, groups, maps, fold, out)
     dnd_png = plot_dnd_scatter(res, keep, dims, models, out)
     k_dnd = [next(k for k, i in enumerate(keep) if dims[i]['id'] == d) for d in ('order', 'morality')]
     anchor = {src: tuple(absolute_level(lines, src, label_fn, ds)[k_dnd]) for src in SOURCES}
@@ -1043,10 +1052,9 @@ def page_random(tables: Path, out: Path, title: str) -> Path:
               'Corner names are directions relative to DeepSeek, not alignments: below 0 means picking less good options than DeepSeek, not being evil. '
               'The 66 virtue labels agree: in game scenarios Qwen and Gemini pick less good options (about 13% lower odds), and in everyday dilemmas Muse does (Details: goodness). '
               'One model also differs in how lawful: Qwen picks less lawful options than DeepSeek in game scenarios (about as much as it picks less good ones); no model is clearly more lawful.</p>',
-              '<h2>Within good: different kinds of good</h2>', img(spider_png),
+              '<h2>Within good: different kinds of good</h2>', img(spider_abs_png), img(spider_png),
               '<p>Once overall goodness is removed, models still differ in which kinds of good they lean towards. Luna leans towards truthfulness and inquiry over kindness and forbearance, in both settings; the other models\' leanings are weaker or less stable. A spoke outside the dashed ring = the model favours that kind of virtue more than DeepSeek does, beyond what goodness alone predicts. '
-              'Rings show % higher or lower odds than DeepSeek. Filled dot = 95% interval excludes 0 (for the grey DeepSeek repeat: outside its own run-to-run range). The table says whether a model\'s style is stable: the correlation of its 66-virtue pattern between two random halves of the questions, and between everyday and game questions '
-              '(1 = same pattern; the DeepSeek repeat row shows what noise alone gives; the 66 virtues overlap, so treat values under about 0.5 as unclear).</p>' + cons_table,
+              'Rings show % higher or lower odds than DeepSeek. Filled dot = 95% interval excludes 0 (for the grey DeepSeek repeat: outside its own run-to-run range).</p>',
               '<details><summary>Style numbers</summary>' + spider_table + '</details>',
               '<h2>Do they really choose as themselves?</h2>', img(role_png),
               '<p>A model choosing as itself should answer the same way whatever the character is like. We test this with pairs of scenes that differ only in the character\'s personality: '
@@ -1057,6 +1065,13 @@ def page_random(tables: Path, out: Path, title: str) -> Path:
               + 'This holds for these 4 scenes; other scenes may differ, and it does not rank the models. '
               + 'Some change is reasonable: a promise the character made is still a promise. (The README table uses all 4 answers per version, so its numbers differ slightly.) '
               f'Source: <code>{escape(", ".join(rp["runs"]))}</code>.</p>',
+              '<h2>Appendix: rules versus virtue, and how consistent each style is</h2>'
+              '<p><b>When the rule and the good deed differ.</b> On the questions where the most lawful option is not the most virtuous one, which way does each model lean, compared with DeepSeek? '
+              'No model clearly picks the rule more than DeepSeek does. Gemini (both settings, though its everyday result depends on the calibration) and Qwen (games) pick the less good option more often, '
+              'which repeats the goodness result on a smaller set of questions; their intervals only just exclude 0.</p>' + rules_table +
+              '<p><b>How consistent is each model\'s style?</b> The correlation of a model\'s 66-virtue pattern (goodness removed, vs DeepSeek) between two random halves of the questions, and between everyday and game questions. '
+              '1 = the same pattern each time. The DeepSeek repeat row shows what noise alone gives; the 66 virtues overlap, so treat values under about 0.5 as unclear. '
+              'Luna is consistent within and across settings; Haiku is consistent within a setting but not across them.</p>' + cons_table,
               '<h2>Details</h2>',
               '<details><summary>Goodness: how often each model picks the good option (66 virtue labels), absolute and vs DeepSeek</summary>' + img(goodness_abs_png) + '<p>The 66 virtue labels mostly move together, so the main difference between models is how often they pick the generally better option ("good" = what the labels score higher, not a moral verdict). '
               'Here 0 is a chooser that splits its percentages evenly, so it has no preference. Each logo is a model after rescaling to DeepSeek\'s spread, with its 95% interval; '
@@ -1067,10 +1082,6 @@ def page_random(tables: Path, out: Path, title: str) -> Path:
               '<details><summary>The D&D scatter as absolute positions</summary><p>Here (0, 0) is a chooser that splits its percentages evenly (neutral). Each point is DeepSeek\'s own position plus the model\'s offset from the chart above, so this is a shift of that chart, with the same intervals. '
               + f"DeepSeek sits at lawful {anchor['daily_dilemmas'][0]:+.2f}, good {anchor['daily_dilemmas'][1]:+.2f} on everyday dilemmas and {anchor['machiavelli'][0]:+.2f}, {anchor['machiavelli'][1]:+.2f} on game scenarios: every model is lawful good, and the differences between them are small next to that.</p>"
               + img(dnd_abs_png) + '</details>' +
-              '<details><summary>When the rule and the good deed differ</summary>' +
-              '<p><b>When the rule and the good deed differ.</b> On the questions where the most lawful option is not the most virtuous one, no model clearly picks the rule more than DeepSeek does. '
-              'Gemini (both settings, though its everyday result depends on the calibration, see Goodness above) and Qwen (games) pick the less good option more often, which repeats step 2 on a smaller set of questions; their intervals only just exclude 0.</p>'
-              + rules_table + '</details>',
               '<details><summary>What the labels measure: the three main patterns</summary><p>Labels only, no model answers. One pattern (PC1) holds about 70% of the variation and is simply "more good"; PC2 and PC3 are trade-offs between groups of virtues.</p>' + pattern_table + img(structure_png) + '</details>',
               '<details><summary>All models on the three patterns (scatter), with numbers</summary>' + img(overall_png) + '<p>Right of 0 (or above) = favours the right (upper) end of that pattern more than DeepSeek. Bars are separate 95% intervals.</p>' + overall_table + '</details>',
               '<details><summary>Calibration: how decisive each model is, before and after</summary>' + img(calib_png) + '<p>Each curve: how far apart a model\'s stated percentages for two options are. Calibration maps each model onto DeepSeek\'s curve (fitted on the other half of the questions) so an indecisive model is not read as preferring worse options.</p></details>',
