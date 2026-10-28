@@ -10,6 +10,7 @@ import re
 from pathlib import Path
 
 import matplotlib
+import matplotlib.patches
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import numpy as np
@@ -702,11 +703,22 @@ def plot_style_spider(lines: list[dict], basis: dict, groups: dict, maps: dict, 
     # Virtue-group preferences once overall goodness is removed: each option's label vector minus its projection on axis 1, then group mean; calibrated nats.
     ds = 'deepseek/deepseek-v4.1-flash'
     models = [m for m in lines[1]['models'] if m != ds]
-    names = list(groups)
+    gidx = [[basis['ids'].index(i) for i in items] for items in groups.values()]
+    # Spoke order: groups whose leftover (goodness-removed) scores correlate sit next to each other: sort by angle in the top-2 eigenvectors of their correlation, options pooled over both sources.
+    R = []
+    for q in lines[1:]:
+        X = np.array([q['option_scores'][x] for x in q['options']], float)[:, basis['direct']] * basis['fav']
+        if np.isfinite(X).all():
+            X = X - X.mean(0)
+            v1 = basis['src'][q['source']]['V'][0]
+            R.append(np.stack([(X - np.outer(X @ v1, v1))[:, ix].mean(1) for ix in gidx], 1))
+    _, E = np.linalg.eigh(np.corrcoef(np.vstack(R).T))
+    spoke = np.argsort(np.arctan2(E[:, -2], E[:, -1]))
+    names = [list(groups)[i] for i in spoke]
+    gidx = [gidx[i] for i in spoke]
     angle = np.linspace(0, 2 * np.pi, len(names), endpoint=False)
     fig, axs = plt.subplots(1, 2, figsize=(13, 6.2), subplot_kw={'projection': 'polar'}, constrained_layout=True)
     rows, res = [], {}
-    gidx = [[basis['ids'].index(i) for i in items] for items in groups.values()]
     for src in SOURCES:
         v1 = basis['src'][src]['V'][0]
 
@@ -776,27 +788,24 @@ def plot_dnd_scatter(res: dict, keep: list, dims: list, models: list, out: Path)
 
 
 def plot_role_play(rp: dict, out: Path) -> Path:
-    # Step 1: per model, how much its stated choice follows the character's personality (mirrored test scenes). Bar = mean over the 4 mind-level pairs, dots = each pair.
-    rows = sorted(((short(m), v) for m, v in rp['models'].items()), key=lambda r: r[1]['mind_mean'] - r[1]['same_scene_again'])
+    # Step 1: per model, how much its stated choice follows the character's personality (mirrored test scenes). Grey = same-scene noise, colour = extra change (role-play), tick = largest extra change chance gives (shuffle null, 95%).
+    rows = sorted(((short(m), v) for m, v in rp['models'].items()), key=lambda r: r[1]['role_play'])
     rows = [(n if n != 'DeepSeek repeat' else 'DeepSeek', v) for n, v in rows]
     fig, ax = plt.subplots(figsize=(10.5, 3.6), constrained_layout=True)
-    pairs = list(rows[0][1]['mind'])
-    marks = dict(zip(pairs, 'o^sD'))
     for y, (n, v) in enumerate(rows):
         col = COLORS.get(n, COLORS['DeepSeek repeat'])
-        gap = v['mind_mean'] - v['same_scene_again']
-        ax.barh(y, v['same_scene_again'], color='#e6e6e6', height=.6, label='same scene asked again (noise)' if y == 0 else None)
-        ax.barh(y, gap, left=v['same_scene_again'], color=col, alpha=.75, height=.6, label='extra change from the character (role-play)' if y == 0 else None)
-        for k in pairs:
-            ax.plot(v['mind'][k], y, marks[k], ms=5, mfc='white', mec=col)
-        ax.text(.63, y, f"{gap:+.2f}", va='center', ha='right', fontsize=10, color=col, weight='bold')
+        base, gap = v['same_scene_again'], v['role_play']
+        real = v['p_value'] < .05
+        ax.barh(y, base, color='#e6e6e6', height=.6, label='same scene asked again (noise)' if y == 0 else None)
+        ax.barh(y, gap, left=base, color=col, alpha=.8 if real else .25, height=.6)
+        ax.plot([base + v['null_95']] * 2, [y - .38, y + .38], color='#222222', lw=1.6, label='largest extra change chance gives (95%)' if y == 0 else None)
+        ax.text(.5, y, f"{gap:+.2f}" + ('' if real else '  (chance)'), va='center', ha='right', fontsize=10, color=col, weight='bold' if real else 'normal')
     ax.set_yticks(range(len(rows)), [n for n, _ in rows])
-    ax.set_xlim(0, .64)
-    ax.text(.63, len(rows) - .4, 'role-play', ha='right', fontsize=8, color='#555555')
+    ax.set_xlim(0, .51)
+    ax.text(.5, len(rows) - .4, 'extra change', ha='right', fontsize=8, color='#555555')
+    ax.add_patch(matplotlib.patches.Rectangle((0, 0), 0, 0, color='#888888', label='extra change when only the personality flips'))
     ax.set_xlabel('change in stated choice when only the character\'s personality flips  (0 = none, 1 = complete)', fontsize=9)
-    for k in pairs:
-        ax.plot([], [], marks[k], mfc='white', mec='#555555', label=k)
-    ax.legend(fontsize=8, frameon=False, loc='upper left', bbox_to_anchor=(1.0, 1.0), title='bar ends at the mean of 4 test scenes;\nmarkers = each scene', title_fontsize=8)
+    ax.legend(fontsize=8, frameon=False, loc='upper left', bbox_to_anchor=(1.0, 1.0), title='4 test scenes, 4 answers per version;\nfaded = within chance', title_fontsize=8)
     for sp in ('top', 'right'):
         ax.spines[sp].set_visible(False)
     path = out / 'role_play.png'
@@ -910,22 +919,21 @@ def page_random(tables: Path, out: Path, title: str) -> Path:
     position_note = ', '.join(f'{m} {np.mean(v):.1f}%' for m, v in sorted(second.items()))
     takeaways = tables.parent / 'takeaways.html'  # hand-written summary of this run, kept next to its data
     blocks = [f'<h1>{escape(title)}</h1>',
-              '<p><b>Models:</b> DeepSeek = DeepSeek v4.1 Flash (the reference), Muse = Meta Muse Spark 1.3, Qwen = Qwen 3.8 27B, Gemini = Google Gemini 3.8 Flash, Luna = OpenAI GPT-5.6 Luna, Haiku = Anthropic Claude Haiku 5.5.</p>',
-              f'<p>{len(lines[1]["models"])} models stated a percentage for every option of 1,000 hash-random questions, 2 draws each: 500 <b>everyday dilemmas</b> (DailyDilemmas) and 500 <b>game scenarios</b> '
-              '(decision points from the MACHIAVELLI choose-your-own-adventure text games, with the story so far summarised into the current scene). '
-              f'Prompt <code>{escape(packet["metadata"]["actor_prompt_protocol"])}</code>: the model is placed in the person\'s position and asked to choose with its own values (full text under Details); it mostly does, with some leftover role-play (see the takeaways). <b>Unit: nats vs DeepSeek</b> = how much more (or less) the model\'s odds favour the option with more of a label than DeepSeek\'s odds do, '
-              'on the same question (+0.1 nats is about 1.1 times DeepSeek\'s odds). <b>Calibrated</b> = each model\'s spread of percentages is first mapped onto DeepSeek\'s (Details: calibration), '
-              'so an indecisive model is not read as preferring worse options.</p>',
+              '<p>We asked six AI chat models what they would do in 1,000 moral dilemmas: 500 <b>everyday dilemmas</b> from the DailyDilemmas dataset, and 500 <b>game scenarios</b> from choose-your-own-adventure text games (MACHIAVELLI). '
+              'Each model imagines it has woken up in the person\'s place, keeps their body and situation but not their personality, and gives a percentage to each option. '
+              'Every option carries labels for 66 virtues and for D&D alignment, so we can see which kinds of option each model favours.</p>'
+              '<p>Each model is compared with one reference model, DeepSeek, on the same questions. The unit is nats: +0.1 nats means about 10% higher odds of choosing an option than DeepSeek gives it. '
+              'Before comparing, each model\'s percentages are rescaled to DeepSeek\'s spread (calibration), so a model that hedges is not read as preferring worse options.</p>'
+              f'<p style="font-size:13px;color:#555">Models: DeepSeek v4.1 Flash (reference), Meta Muse Spark 1.3, Qwen 3.8 27B, Google Gemini 3.8 Flash, OpenAI GPT-5.6 Luna, Anthropic Claude Haiku 5.5. 2 answers per question. Prompt <code>{escape(packet["metadata"]["actor_prompt_protocol"])}</code> (full text under Details).</p>',
               takeaways.read_text() if takeaways.exists() else '',
               '<h2>1. Check first: do they choose as themselves, or play the character?</h2>', img(role_png),
-              '<p>Before reading any result, check what the models are doing. Pairs of test scenes differ only in the character\'s personality, for example a woman whose life dream is to climb Everest, or one terrified of heights, '
-              'offered the last place on an Everest expedition. A model choosing as itself answers both the same way. '
+              '<p>A model choosing as itself should answer the same way whatever the character is like. We test this with pairs of scenes that differ only in the character\'s personality: '
+              'for example, a woman whose life dream is to climb Everest, or one afraid of heights, is offered the last place on an Everest expedition. '
               + f"Haiku takes the place {everest['anthropic/claude-haiku-5.5']['dream']:.0%} of the time for the climber and {everest['anthropic/claude-haiku-5.5']['afraid']:.0%} for the one afraid of heights; DeepSeek {everest['deepseek/deepseek-v4.1-flash']['dream']:.0%} and {everest['deepseek/deepseek-v4.1-flash']['afraid']:.0%}. "
-              + 'The grey part of each bar is how much the answer moves when the same scene is simply asked again (noise); the coloured part is how much more it moves when only the personality flips. '
-              + 'Gemini, Qwen and Haiku follow the character most (about +0.14); Muse, Luna and DeepSeek less (+0.04 to +0.07). '
-              + 'This is a rough sign of role-play from 4 test scenes, not a measure of how much role-play is in the 1,000 questions; the two parts do not add up exactly (each compares 2 answers with 2 answers). '
-              + 'The README table uses all 4 answers per version, so its numbers differ slightly. '
-              + 'Some change is reasonable (a character already entered in a tournament has a commitment), so the gap somewhat overstates role-play. '
+              + 'Grey: how much the answer changes when the same scene is asked again. Colour: how much more it changes when only the personality flips. '
+              + 'The black tick is the largest extra change that chance alone gives (answers shuffled between the two versions). Haiku, Qwen, Gemini and DeepSeek pass it, so their results below include some role-play; Muse and Luna stay within chance. '
+              + 'This holds for these 4 scenes; other scenes may differ, and it does not rank the models. '
+              + 'Some change is reasonable: a promise the character made is still a promise. (The README table uses all 4 answers per version, so its numbers differ slightly.) '
               f'Source: <code>{escape(", ".join(rp["runs"]))}</code>.</p>',
               '<h2>2. Main result: how often each model picks the good option</h2>', img(goodness_png),
               '<p>The 66 virtue labels mostly move together, so the main difference between models is how often they pick the generally better option. '
@@ -975,6 +983,6 @@ if __name__ == '__main__':
     parser.add_argument('--scoring', type=Path, default=ROOT / 'outputs/20261026_probability_eval_scored/scoring')
     parser.add_argument('--out', type=Path, default=ROOT / '.local/choice_preview/probability_eval')
     parser.add_argument('--tables', type=Path, help='question_tables.jsonl of a random run; builds the random-set page instead')
-    parser.add_argument('--title', default='How do AI models choose in moral dilemmas? 1,000 random questions, six models')
+    parser.add_argument('--title', default='Which options do AI models choose in moral dilemmas?')
     a = parser.parse_args()
     print(page_random(a.tables, a.out, a.title) if a.tables else page(a.scoring, a.out))
