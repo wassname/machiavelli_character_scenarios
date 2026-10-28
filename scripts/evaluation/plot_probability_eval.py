@@ -759,32 +759,63 @@ def plot_style_spider(lines: list[dict], basis: dict, groups: dict, maps: dict, 
     return path, table
 
 
-def plot_dnd_scatter(res: dict, keep: list, dims: list, models: list, out: Path) -> Path:
+def absolute_level(lines: list[dict], src: str, label_fn, model: str) -> np.ndarray:
+    # A model's own log-odds toward the higher-label option against a chooser that splits % evenly (0 = no preference); nats_core's pair formula and question cohort, no calibration.
+    ds = 'deepseek/deepseek-v4.1-flash'
+    everyone = list(lines[1]['models'])
+    num, den = 0., 0.
+    for q in lines[1:]:
+        if q['source'] != src or set(everyone) - set(q['models']) or any(len(q['models'][m]['draws']) < 2 for m in q['models']):
+            continue
+        X = label_fn(q)
+        iu = np.triu_indices(len(X), 1)
+        dX = X[iu[0]] - X[iu[1]]
+        ok = np.isfinite(dX)
+        assert model == ds, 'only the reference model is uncalibrated by definition'
+        lp = calibrated_logp(q, ds, {}, {})
+        num = num + (np.where(ok, np.abs(dX), 0.) * np.where(ok, np.sign(dX), 0.) * (lp[iu[0]] - lp[iu[1]])[:, None]).sum(0)
+        den = den + np.where(ok, np.abs(dX), 0.).sum(0)
+    return num / den
+
+
+def plot_dnd_scatter(res: dict, keep: list, dims: list, models: list, out: Path, anchor: dict | None = None) -> Path:
     # D&D in calibrated nats: x = toward the more lawful option, y = toward the more good option; crosses = 95% intervals; DeepSeek at (0, 0) as the reference.
+    # anchor = {src: (lawful, good)} of DeepSeek against an even split: shifts every point to an absolute position (post hoc: DeepSeek's absolute level + calibrated offset).
     k_order = next(k for k, i in enumerate(keep) if dims[i]['id'] == 'order')
     k_good = next(k for k, i in enumerate(keep) if dims[i]['id'] == 'morality')
-    fig, axs = plt.subplots(1, 2, figsize=(12, 5.4), constrained_layout=True, sharex=True, sharey=True)
+    fig, axs = plt.subplots(1, 2, figsize=(12, 5.4), constrained_layout=True, sharex=bool(anchor) is False, sharey=bool(anchor) is False)
     for ax, (src, name) in zip(axs, SOURCES.items()):
         point, lo, hi, n, inf = res['calibrated'][src]
-        labels = [('DeepSeek (reference)', 0, 0, '#666666', 8)]
+        ax0, ay0 = anchor[src] if anchor else (0., 0.)
+        labels = [('DeepSeek (reference)', ax0, ay0, '#666666', 8)]
         for j, m in enumerate(models):
             col = COLORS[short(m)]
-            x, y = point[j, k_order], point[j, k_good]
-            ax.errorbar(x, y, xerr=[[x - lo[j, k_order]], [hi[j, k_order] - x]], yerr=[[y - lo[j, k_good]], [hi[j, k_good] - y]], fmt='none', ecolor=col, lw=1.2, capsize=3)
-            logo(ax, x, y, short(m))
+            x, y = point[j, k_order] + ax0, point[j, k_good] + ay0
+            lo_j, hi_j = lo[j] + np.array([ax0 if k == k_order else ay0 if k == k_good else 0 for k in range(lo.shape[1])]), hi[j] + np.array([ax0 if k == k_order else ay0 if k == k_good else 0 for k in range(hi.shape[1])])
+            ax.errorbar(x, y, xerr=[[x - lo_j[k_order]], [hi_j[k_order] - x]], yerr=[[y - lo_j[k_good]], [hi_j[k_good] - y]], fmt='none', ecolor=col, lw=1.2, capsize=3)
+            logo(ax, x, y, short(m)) if not anchor else ax.plot(x, y, 'o', color=col, ms=5, zorder=3)  # absolute view: small dots so the crosses stay visible
             labels.append((short(m), x, y, col, 9))
-        logo(ax, 0, 0, 'DeepSeek repeat', .16)  # DeepSeek is the reference: (0, 0) by definition
+        logo(ax, ax0, ay0, 'DeepSeek repeat', .16) if not anchor else ax.plot(ax0, ay0, 'o', color='#666666', ms=5, zorder=3)  # DeepSeek is the reference: its own position
         place_labels(ax, labels)
-        for (qx, qy, txt) in ((0.98, 0.98, 'more lawful, more good'), (0.02, 0.98, 'more chaotic, more good'), (0.02, 0.02, 'more chaotic, less good'), (0.98, 0.02, 'more lawful, less good')):
+        corners = (('more lawful, more good', 'more chaotic, more good', 'more chaotic, less good', 'more lawful, less good') if not anchor
+                   else ('lawful good', 'chaotic good', 'chaotic evil', 'lawful evil'))
+        for (qx, qy), txt in zip(((0.98, 0.98), (0.02, 0.98), (0.02, 0.02), (0.98, 0.02)), corners):
             ax.text(qx, qy, txt, transform=ax.transAxes, ha='right' if qx > .5 else 'left', va='top' if qy > .5 else 'bottom', color='#aaaaaa', fontsize=9, style='italic')
         ax.axhline(0, color='#888888', lw=.8)
         ax.axvline(0, color='#888888', lw=.8)
+        if anchor:  # show the even-split chooser (neutral) and keep the axes symmetric around it
+            lim = 1.15 * max(abs(v) for v in (*ax.get_xlim(), *ax.get_ylim()))
+            ax.set_xlim(-lim, lim)
+            ax.set_ylim(-lim, lim)
+            ax.set_aspect('equal')
+            ax.plot(0, 0, 's', color='#888888', ms=6)
+            ax.annotate('neutral\n(even split)', (0, 0), xytext=(6, 6), textcoords='offset points', fontsize=8, color='#666666')
         ax.set_title(f'{name} (lawful: {inf[k_order]} questions, good: {inf[k_good]})', loc='left', fontsize=10)
-        ax.set_xlabel('\u2190 more chaotic | more lawful \u2192  [nats vs DeepSeek]')
+        ax.set_xlabel('\u2190 more chaotic | more lawful \u2192  ' + ('[nats vs an even split]' if anchor else '[nats vs DeepSeek]'))
         for sp in ('top', 'right'):
             ax.spines[sp].set_visible(False)
-    axs[0].set_ylabel('\u2190 less good | more good \u2192  [nats vs DeepSeek]')
-    path = out / 'dnd_scatter.png'
+    axs[0].set_ylabel('\u2190 less good | more good \u2192  ' + ('[nats vs an even split]' if anchor else '[nats vs DeepSeek]'))
+    path = out / ('dnd_scatter_absolute.png' if anchor else 'dnd_scatter.png')
     fig.savefig(path, dpi=110)
     plt.close(fig)
     return path
@@ -924,6 +955,9 @@ def page_random(tables: Path, out: Path, title: str) -> Path:
     overall_png, overall_table = plot_pc_scatter(lines, basis, maps, identity, fold, out)
     spider_png, spider_table = plot_style_spider(lines, basis, groups, maps, fold, out)
     dnd_png = plot_dnd_scatter(res, keep, dims, models, out)
+    k_dnd = [next(k for k, i in enumerate(keep) if dims[i]['id'] == d) for d in ('order', 'morality')]
+    anchor = {src: tuple(absolute_level(lines, src, label_fn, ds)[k_dnd]) for src in SOURCES}
+    dnd_abs_png = plot_dnd_scatter(res, keep, dims, models, out, anchor)
     calib_png = calibration_before_after(tables, out)
     grid_pngs, dnd_table = nats_per_label(tables, out)
     goodness_png = plot_goodness(lines, basis, maps, fold, out)
@@ -1007,6 +1041,9 @@ def page_random(tables: Path, out: Path, title: str) -> Path:
               'Corner names are directions relative to DeepSeek, not alignments: below 0 means picking less good options than DeepSeek, not being evil. '
               'The good axis here is the D&D label from the source data, not the 66-virtue score of step 2, so the numbers differ slightly. '
               'One model also differs in how lawful: Qwen picks less lawful options than DeepSeek in game scenarios (about as much as it picks less good ones); no model is clearly more lawful.</p>',
+              '<p><b>The same, as absolute positions.</b> Here (0, 0) is a chooser that splits its percentages evenly (neutral). Each point is DeepSeek\'s own position plus the model\'s offset from the chart above, so this is a shift of that chart, with the same intervals. '
+              + f"DeepSeek sits at lawful {anchor['daily_dilemmas'][0]:+.2f}, good {anchor['daily_dilemmas'][1]:+.2f} on everyday dilemmas and {anchor['machiavelli'][0]:+.2f}, {anchor['machiavelli'][1]:+.2f} on game scenarios: every model is lawful good, and the differences between them are small next to that.</p>"
+              + img(dnd_abs_png) +
               '<p><b>When the rule and the good deed differ.</b> On the questions where the most lawful option is not the most virtuous one, no model clearly picks the rule more than DeepSeek does. '
               'Gemini (both settings) and Qwen (games) pick the less good option more often, which repeats step 2 on a smaller set of questions; their intervals only just exclude 0.</p>'
               '<details><summary>Numbers</summary>' + rules_table + '</details>',
