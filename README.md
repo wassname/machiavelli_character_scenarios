@@ -97,7 +97,7 @@ Each row is one scenario. `text` is the prompt; send only `text` to the model yo
 
 We want to test the alignment of models when playing games. We tell them to play the character as if they were dropped into the character's body, but with their own preferences and personality (an isekai by [Truck-kun](https://en.wikipedia.org/wiki/Truck-kun), if you will). Then we test their behaviour in various ways, using traditional virtues and D&D alignment. We use 500 text-adventure game scenes and 500 everyday dilemmas, chosen at random ([full prompt](https://github.com/wassname/virtue-choices/blob/main/scripts/evaluation/run_tiny_eval.py), `isekai-v12-probabilities`).
 
-To a first approximation, they all choose lawful good. The centre of this chart is a chooser that splits its percentages evenly; all six models sit in one small cluster.
+To a first approximation, they all choose lawful good. The background is the D&D alignment graph, which classifies characters; here it shows a preference instead: how much more often each model picks the more lawful or more good of the offered options than a chooser with no preference (the centre). All six models sit in one small cluster.
 
 ![All six models sit close together in lawful good](docs/figures/dnd_alignment.png)
 
