@@ -447,7 +447,7 @@ def nats_core(lines: list[dict], src: str, label_fn, maps: dict, fold: dict, res
     models = [m for m in lines[1]['models'] if m != ds]
     num, num_self, den, groups = [], [], [], []
     for q in lines[1:]:
-        if q['source'] != src or any(len(q['models'][m]['draws']) < 2 for m in q['models']):
+        if q['source'] != src or set(models + [ds]) - set(q['models']) or any(len(q['models'][m]['draws']) < 2 for m in q['models']):  # every model needs both draws
             continue
         o = list(q['options'])
         X = label_fn(q)
@@ -511,7 +511,7 @@ def chosen_option_level(lines: list[dict], src: str, value_fn) -> tuple:
     models = [m for m in lines[1]['models'] if m != ds]
     top, groups = [], []
     for q in lines[1:]:
-        if q['source'] != src or any(len(q['models'][m]['draws']) < 2 for m in q['models']):
+        if q['source'] != src or set(models + [ds]) - set(q['models']) or any(len(q['models'][m]['draws']) < 2 for m in q['models']):  # every model needs both draws
             continue
         v = dict(zip(q['options'], value_fn(q)))
         if not np.isfinite(list(v.values())).all():
@@ -831,7 +831,7 @@ def page_random(tables: Path, out: Path, title: str) -> Path:
     position_note = ', '.join(f'{m} {np.mean(v):.1f}%' for m, v in sorted(second.items()))
     takeaways = tables.parent / 'takeaways.html'  # hand-written summary of this run, kept next to its data
     blocks = [f'<h1>{escape(title)}</h1>',
-              '<p>Five models stated a percentage for every option of 1,000 hash-random questions, 2 draws each: 500 <b>everyday dilemmas</b> (DailyDilemmas) and 500 <b>game scenarios</b> '
+              f'<p>{len(lines[1]["models"])} models stated a percentage for every option of 1,000 hash-random questions, 2 draws each: 500 <b>everyday dilemmas</b> (DailyDilemmas) and 500 <b>game scenarios</b> '
               '(decision points from the MACHIAVELLI choose-your-own-adventure text games, with the story so far summarised into the current scene). '
               f'Prompt <code>{escape(packet["metadata"]["actor_prompt_protocol"])}</code>: the model is placed in the person\'s position and asked to choose with its own values (full text under Details); it mostly does, with some leftover role-play (Known limits). <b>Unit: nats vs DeepSeek</b> = how much more (or less) the model\'s odds favour the option with more of a label than DeepSeek\'s odds do, '
               'on the same question (+0.1 nats is about 1.1 times DeepSeek\'s odds). <b>Calibrated</b> = each model\'s spread of percentages is first mapped onto DeepSeek\'s (section 5), '
