@@ -689,7 +689,7 @@ def plot_pc_scatter(lines: list[dict], basis: dict, maps: dict, identity: dict, 
             self_ = m == 'DeepSeek repeat'
             rows.append([sname, short(m)] + [fmt(cal[0][j, k], cal[1][j, k], cal[2][j, k], self_) for k in range(3)]
                         + [fmt(raw[0][j, 0], raw[1][j, 0], raw[2][j, 0], self_), '' if self_ else fmt(top[0][j], top[1][j], top[2][j]), cal[3]])
-    fig.suptitle('PC = a pattern in the options\' virtue labels (section 1). Position = how much more than DeepSeek (at 0, 0) the model favours one end of each pattern', fontsize=10)
+    fig.suptitle('PC = a pattern in the options\' virtue labels (see Details). Position = how much more than DeepSeek (at 0, 0) the model favours one end of each pattern', fontsize=10)
     path = out / 'pc_scatter.png'
     fig.savefig(path, dpi=110)
     plt.close(fig)
@@ -771,6 +771,62 @@ def plot_dnd_scatter(res: dict, keep: list, dims: list, models: list, out: Path)
     return path
 
 
+def plot_role_play(rp: dict, out: Path) -> Path:
+    # Step 1: per model, how much its stated choice follows the character's personality (mirrored test scenes). Bar = mean over the 4 mind-level pairs, dots = each pair.
+    rows = sorted(((short(m), v) for m, v in rp['models'].items()), key=lambda r: r[1]['mind_mean'])
+    rows = [(n if n != 'DeepSeek repeat' else 'DeepSeek', v) for n, v in rows]
+    fig, ax = plt.subplots(figsize=(8.5, 3.6), constrained_layout=True)
+    pairs = list(rows[0][1]['mind'])
+    marks = dict(zip(pairs, 'o^sD'))
+    for y, (n, v) in enumerate(rows):
+        col = COLORS.get(n, COLORS['DeepSeek repeat'])
+        ax.barh(y, v['mind_mean'], color=col, alpha=.35, height=.6)
+        for k in pairs:
+            ax.plot(v['mind'][k], y, marks[k], ms=5, mfc='white', mec=col)
+        ax.text(.63, y, f"{v['mind_mean']:.2f}", va='center', ha='right', fontsize=10, color=col, weight='bold')
+    ax.set_yticks(range(len(rows)), [n for n, _ in rows])
+    ax.set_xlim(0, .64)
+    ax.text(.63, len(rows) - .4, 'mean', ha='right', fontsize=8, color='#555555')
+    ax.set_xlabel('\u2190 chooses as itself  |  copies the character \u2192   (change in stated choice when only the character\'s personality flips)', fontsize=9)
+    for k in pairs:
+        ax.plot([], [], marks[k], mfc='white', mec='#555555', label=k)
+    ax.legend(fontsize=8, frameon=False, loc='lower right', bbox_to_anchor=(.93, 0), title='bar = mean of', title_fontsize=8)
+    for sp in ('top', 'right'):
+        ax.spines[sp].set_visible(False)
+    path = out / 'role_play.png'
+    fig.savefig(path, dpi=110)
+    plt.close(fig)
+    return path
+
+
+def plot_goodness(lines: list[dict], basis: dict, maps: dict, fold: dict, out: Path) -> Path:
+    # Step 2: overall goodness (PC1 of the virtue labels) per model, calibrated nats vs DeepSeek with 95% intervals; grey band = DeepSeek's own run-to-run range.
+    ds = 'deepseek/deepseek-v4.1-flash'
+    models = [m for m in lines[1]['models'] if m != ds]
+    fig, axs = plt.subplots(1, 2, figsize=(11, 3.8), constrained_layout=True, sharex=True, sharey=True)
+    order = None
+    for ax, (src, sname) in zip(axs[::-1], list(SOURCES.items())[::-1]):  # games first, to fix one model order for both panels
+        V = basis['src'][src]['V'].T
+        g = lambda q, V=V: np.array([q['option_scores'][x] for x in q['options']], float)[:, basis['direct']] * basis['fav'] @ V[:, :1]
+        point, lo, hi, n, _ = nats_core(lines, src, g, maps, fold)
+        order = np.argsort(point[:len(models), 0]) if order is None else order
+        ax.axvline(0, color='#888888', lw=.8)
+        for y, j in enumerate(order):
+            name = short(models[j])
+            ax.plot([lo[j, 0], hi[j, 0]], [y, y], color=COLORS[name], lw=1.6)
+            logo(ax, point[j, 0], y, name, .14)
+        ax.set_yticks(range(len(order)), [short(models[j]) for j in order])
+        ax.set_ylim(-.7, len(order) - .3)
+        ax.set_title(f'{sname} ({n} questions; DeepSeek vs itself: {point[-1, 0]:+.2f})', loc='left', fontsize=10)
+        ax.set_xlabel('\u2190 less good  |  more good \u2192   than DeepSeek (nats; 0 = same as DeepSeek)', fontsize=9)
+        for sp in ('top', 'right'):
+            ax.spines[sp].set_visible(False)
+    path = out / 'goodness.png'
+    fig.savefig(path, dpi=110)
+    plt.close(fig)
+    return path
+
+
 def page_random(tables: Path, out: Path, title: str) -> Path:
     # Page for a hash-random question set, in nats vs DeepSeek: label structure, overall goodness, style once goodness is removed, D&D, calibration, details.
     out.mkdir(parents=True, exist_ok=True)
@@ -794,6 +850,19 @@ def page_random(tables: Path, out: Path, title: str) -> Path:
     dnd_png = plot_dnd_scatter(res, keep, dims, models, out)
     calib_png = calibration_before_after(tables, out)
     grid_pngs, dnd_table = nats_per_label(tables, out)
+    goodness_png = plot_goodness(lines, basis, maps, fold, out)
+    rp = json.loads((tables.parent / 'role_play_probes.json').read_text())
+    role_png = plot_role_play(rp, out)
+    from rules_and_consistency import analyse  # imports this module, so imported here
+    rc = analyse(lines, basis, maps, fold)
+    rules_rows = []
+    for src, sname in SOURCES.items():
+        names, point, lo, hi, n_conf = rc['rules'][src]
+        rules_rows += [[sname, nm, fmt(point[j, 0], lo[j, 0], hi[j, 0], nm == 'DeepSeek repeat'), fmt(point[j, 1], lo[j, 1], hi[j, 1], nm == 'DeepSeek repeat'), n_conf] for j, nm in enumerate(names)]
+    rules_table = tabulate(rules_rows, headers=['Source', 'Model', 'Toward the lawful option', 'Toward the good option', 'Questions where they differ'], tablefmt='html')
+    cons_table = tabulate([[n, f'{a:+.2f}', f'{b:+.2f}', f'{c:+.2f}'] for n, (a, b, c) in rc['consistency'].items()],
+                          headers=['Model', 'Two halves, everyday', 'Two halves, games', 'Everyday vs games'], tablefmt='html')
+    everest = rp['everest_take_slot']
     qs = lines[1:]
     qs = sorted(qs, key=lambda q: hashlib.sha256(('example:' + q['source_id']).encode()).hexdigest())
     chosen = [q for src in SOURCES for q in [x for x in qs if x['source'] == src][:3]]
@@ -834,33 +903,33 @@ def page_random(tables: Path, out: Path, title: str) -> Path:
               f'<p>{len(lines[1]["models"])} models stated a percentage for every option of 1,000 hash-random questions, 2 draws each: 500 <b>everyday dilemmas</b> (DailyDilemmas) and 500 <b>game scenarios</b> '
               '(decision points from the MACHIAVELLI choose-your-own-adventure text games, with the story so far summarised into the current scene). '
               f'Prompt <code>{escape(packet["metadata"]["actor_prompt_protocol"])}</code>: the model is placed in the person\'s position and asked to choose with its own values (full text under Details); it mostly does, with some leftover role-play (see the takeaways). <b>Unit: nats vs DeepSeek</b> = how much more (or less) the model\'s odds favour the option with more of a label than DeepSeek\'s odds do, '
-              'on the same question (+0.1 nats is about 1.1 times DeepSeek\'s odds). <b>Calibrated</b> = each model\'s spread of percentages is first mapped onto DeepSeek\'s (section 5), '
+              'on the same question (+0.1 nats is about 1.1 times DeepSeek\'s odds). <b>Calibrated</b> = each model\'s spread of percentages is first mapped onto DeepSeek\'s (Details: calibration), '
               'so an indecisive model is not read as preferring worse options.</p>',
               takeaways.read_text() if takeaways.exists() else '',
-              '<h2>1. The virtue labels mostly measure one thing: overall goodness</h2>',
-              '<p>This section uses the labels only, no model answers. Within a question, an option that scores high on one virtue usually scores high on the others. '
-              'So the 66 virtue scores mostly move together: one pattern (PC1, the first principal component) holds about 70% of their variation, and it is simply "more good". '
-              'The next two patterns (PC2, PC3) are trade-offs between groups of virtues, named from the groups at each end.</p>' + pattern_table,
-              '<details><summary>How each virtue group loads on the three patterns</summary>' + img(structure_png) + '</details>',
-              '<h2>2. Where each model sits on the components</h2>', img(overall_png),
-              '<p>Each logo is a model; DeepSeek is the reference at (0, 0). Right of 0 (or above 0) = the model\'s odds favour the right (or upper) end of that pattern more than DeepSeek\'s do; left or below = the other end. '
-              'Unit: calibrated log-odds difference (nats), averaged over the option pairs of each question; +0.1 is on average about 1.1 times DeepSeek\'s odds. '
-              'The horizontal and vertical bars are separate 95% intervals (resampling games/topics, then each model\'s two draws); a bar crossing 0 means no shown difference from DeepSeek on that axis. Uncalibrated values are in the Numbers table. DeepSeek is the reference, so it sits at (0, 0) by definition; its own run-to-run variation (its two answers compared) is in the Details numbers and is about the size of the smaller intervals. '
-              'Most of the interval width comes from differences between games/topics, not draws, so more draws would shrink it only a little; more questions would help.</p>',
-              '<details><summary>Numbers, with the chosen-option check</summary><p>Chosen option only: in each draw take the option with the highest stated %, score it on PC1 (ties averaged), '
-              'then the model\'s mean minus DeepSeek\'s; this ignores how the rest of the percentage is spread, so it cannot be a decisiveness effect. It is a label-score difference, not nats, so compare its sign with the calibrated column, not its size.</p>' + overall_table + '</details>',
-              '<h2>3. Style: virtue-group preferences once overall goodness is removed</h2>', img(spider_png),
-              '<p>Each option\'s 66 virtue scores minus their overall-goodness part (projection on axis 1), averaged within each group. A spoke outside the dashed ring = the model favours options with more of that group '
-              '<i>than their overall goodness would predict</i>, more than DeepSeek does. Filled dot = 95% interval excludes 0 (for the DeepSeek repeat: outside DeepSeek\'s run-to-run range); hollow = not distinguishable from DeepSeek.</p>',
-              '<details><summary>Numbers</summary>' + spider_table + '</details>',
-              '<h2>4. D&D alignment</h2>', img(dnd_png),
-              '<p>Calibrated nats toward the more lawful (x) and more good (y) option, from the source D&D labels. Crosses = 95% intervals. DeepSeek is the reference, so it sits at (0, 0) by definition.</p>',
-              '<h2>5. Calibration: decisiveness before and after</h2>', img(calib_png),
-              '<p>Each curve: how far apart a model\'s stated percentages for two options of a question are (absolute log-odds, each question weighted equally). Left of DeepSeek (grey) = spreads its percentages more evenly. '
-              'Calibration maps each model onto DeepSeek\'s curve using quantiles fitted on the other half of the questions; option order within a question never changes. '
-              'Overlap on the held-out half shows the decisiveness scale transfers, not that preferences are correct.</p>',
+              '<h2>1. Do the models choose as themselves, or play the character?</h2>', img(role_png),
+              '<p>Before reading any result, check what the models are doing. Pairs of test scenes differ only in the character\'s personality, for example a woman whose life dream is to climb Everest, or one terrified of heights, '
+              'offered the last place on an Everest expedition. A model choosing as itself answers both the same way. '
+              + f"Haiku takes the place {everest['anthropic/claude-haiku-5.5']['dream']:.0%} of the time for the climber and {everest['anthropic/claude-haiku-5.5']['afraid']:.0%} for the one afraid of heights; DeepSeek {everest['deepseek/deepseek-v4.1-flash']['dream']:.0%} and {everest['deepseek/deepseek-v4.1-flash']['afraid']:.0%}. "
+              + 'All models mostly choose as themselves, with some role-play; some change is reasonable (a character already entered in a tournament has a commitment), so the bars somewhat overstate it. '
+              f'Source: <code>{escape(", ".join(rp["runs"]))}</code>.</p>',
+              '<h2>2. Do they choose the good option?</h2>', img(goodness_png),
+              '<p>The 66 virtue labels mostly move together, so the main difference between models is how often they pick the generally better option. '
+              'Each logo is a model compared with DeepSeek on the same questions; the line is its 95% interval. +0.1 nats means about 10% higher odds of picking the better option than DeepSeek. '
+              'Grey band = how much DeepSeek differs from itself when asked twice.</p>',
+              '<h2>3. Good or lawful?</h2>', img(dnd_png),
+              '<p>The same answers scored on the D&D axes: up = picks the more good option, right = picks the more lawful option, compared with DeepSeek at the centre. Crosses are 95% intervals.</p>',
+              '<p>When the rule and the good deed point to different options (the most lawful option is not the most virtuous one), which way does each model lean, compared with DeepSeek?</p>',
+              '<details><summary>Rules vs virtue, on questions where they differ</summary>' + rules_table + '</details>',
+              '<h2>4. Beyond goodness: each model\'s style</h2>', img(spider_png),
+              '<p>What is left once overall goodness is removed. A spoke outside the dashed ring = the model favours that kind of virtue more than DeepSeek does, beyond what goodness alone predicts. '
+              'Filled dot = 95% interval excludes 0. The table says whether a model\'s style is stable: the correlation of its 66-virtue pattern between two random halves of the questions, and between everyday and game questions '
+              '(1 = same pattern; the DeepSeek repeat row shows what noise alone gives; the 66 virtues overlap, so treat values under about 0.5 as unclear).</p>' + cons_table,
+              '<details><summary>Style numbers</summary>' + spider_table + '</details>',
               '<h2>Details</h2>',
-              '<details><summary>Every label, uncalibrated vs calibrated (virtues, behaviours, D&D)</summary><p>Same metric per label; most virtue rows repeat the overall-goodness result (section 1). '
+              '<details><summary>What the labels measure: the three main patterns</summary><p>Labels only, no model answers. One pattern (PC1) holds about 70% of the variation and is simply "more good"; PC2 and PC3 are trade-offs between groups of virtues.</p>' + pattern_table + img(structure_png) + '</details>',
+              '<details><summary>All models on the three patterns (scatter), with numbers</summary>' + img(overall_png) + '<p>Right of 0 (or above) = favours the right (upper) end of that pattern more than DeepSeek. Bars are separate 95% intervals.</p>' + overall_table + '</details>',
+              '<details><summary>Calibration: how decisive each model is, before and after</summary>' + img(calib_png) + '<p>Each curve: how far apart a model\'s stated percentages for two options are. Calibration maps each model onto DeepSeek\'s curve (fitted on the other half of the questions) so an indecisive model is not read as preferring worse options.</p></details>',
+              '<details><summary>Every label, uncalibrated vs calibrated (virtues, behaviours, D&D)</summary><p>Same metric per label; most virtue rows repeat the overall-goodness result (step 2). '
               'n = questions where the label differs between options.</p>' + ''.join(img(x) for x in grid_pngs) + dnd_table + '</details>',
               '<details><summary>Known limits</summary><ul>'
               f'<li>Option order: on two-option questions the option shown second gets on average {position_note}. Every model sees the same two orders, so an order preference should largely cancel in comparisons (not tested order by order).</li>'

@@ -18,15 +18,13 @@ from plot_probability_eval import ROOT, SOURCES, load_calibration, nats_core, sh
 DS = 'deepseek/deepseek-v4.1-flash'
 
 
-def main(tables: Path) -> None:
-    lines, maps, identity, fold = load_calibration(tables)
-    groups = json.loads((ROOT / 'rubrics/virtue_display_groups.json').read_text())['groups']
-    basis = virtue_basis(lines, groups)
+def analyse(lines: list[dict], basis: dict, maps: dict, fold: dict) -> dict:
+    # Returns {'rules': {source: (names, point, lo, hi, n_conflict)}, 'consistency': {model name: (halves everyday, halves games, everyday vs games)}}.
     dims = lines[0]['_meta']['dimensions']
     k_order = next(i for i, d in enumerate(dims) if d['id'] == 'order')
     models = [m for m in lines[1]['models'] if m != DS]
     names = [short(m) for m in models] + ['DeepSeek repeat']
-    out = []
+    out, result = [], {}
 
     # 1. Rules vs virtue. goodness = PC1 of the 66 virtue labels (per source); lawful = D&D order label.
     rows = []
@@ -42,6 +40,7 @@ def main(tables: Path) -> None:
         fn = lambda q: (np.stack([law(q), good(q)], 1) if conflict(q) else np.full((len(q['options']), 2), np.nan))
         point, lo, hi, nq, inf = nats_core(lines, src, fn, maps, fold)
         n_conf = int(inf[0])
+        result.setdefault('rules', {})[src] = (names, point, lo, hi, n_conf)
         for j, n in enumerate(names):
             null = n == 'DeepSeek repeat'
             rows.append([sname, n, f'{point[j, 0]:+.3f} ({lo[j, 0]:+.3f} to {hi[j, 0]:+.3f})', f'{point[j, 1]:+.3f} ({lo[j, 1]:+.3f} to {hi[j, 1]:+.3f})', n_conf])
@@ -64,6 +63,8 @@ def main(tables: Path) -> None:
         for half in (None, 0, 1):
             prof[src, half] = nats_core(lines, src, lambda q, h=half: style(q, h), maps, fold)[0]  # models+self x 66
     corr = lambda a, b: float(np.corrcoef(a, b)[0, 1])
+    result['consistency'] = {n: (corr(prof['daily_dilemmas', 0][j], prof['daily_dilemmas', 1][j]), corr(prof['machiavelli', 0][j], prof['machiavelli', 1][j]),
+                                 corr(prof['daily_dilemmas', None][j], prof['machiavelli', None][j])) for j, n in enumerate(names)}
     rows = []
     for j, n in enumerate(names):
         rows.append([n] + [f'{corr(prof[s, 0][j], prof[s, 1][j]):+.2f}' for s in SOURCES]
@@ -72,6 +73,14 @@ def main(tables: Path) -> None:
                'Numbers are correlations across the 66 virtues between two hash-random halves of the questions (within a source), and between everyday and game questions. '
                '1 = the same pattern of leanings; 0 = no shared pattern. The DeepSeek repeat row (DeepSeek against itself) shows what noise alone gives.\n\n'
                + tabulate(rows, headers=['Model', 'Halves, everyday', 'Halves, games', 'Everyday vs games'], tablefmt='github'))
+    result['markdown'] = out
+    return result
+
+
+def main(tables: Path) -> None:
+    lines, maps, identity, fold = load_calibration(tables)
+    groups = json.loads((ROOT / 'rubrics/virtue_display_groups.json').read_text())['groups']
+    out = analyse(lines, virtue_basis(lines, groups), maps, fold)['markdown']
     text = f'# Rules vs virtue, and virtue consistency\n\nData: `{tables.relative_to(ROOT)}`. Script: `scripts/evaluation/rules_and_consistency.py`.\n\n' + '\n\n'.join(out) + '\n\n-- PI/OpenAI\n'
     (tables.parent / 'rules_and_consistency.md').write_text(text)
     print(text)
