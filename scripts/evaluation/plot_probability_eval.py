@@ -759,7 +759,7 @@ def plot_dnd_scatter(res: dict, keep: list, dims: list, models: list, out: Path)
             labels.append((short(m), x, y, col, 9))
         logo(ax, 0, 0, 'DeepSeek repeat', .16)  # DeepSeek is the reference: (0, 0) by definition
         place_labels(ax, labels)
-        for (qx, qy, txt) in ((0.98, 0.98, 'lawful good'), (0.02, 0.98, 'chaotic good'), (0.02, 0.02, 'chaotic evil'), (0.98, 0.02, 'lawful evil')):
+        for (qx, qy, txt) in ((0.98, 0.98, 'more lawful, more good'), (0.02, 0.98, 'more chaotic, more good'), (0.02, 0.02, 'more chaotic, less good'), (0.98, 0.02, 'more lawful, less good')):
             ax.text(qx, qy, txt, transform=ax.transAxes, ha='right' if qx > .5 else 'left', va='top' if qy > .5 else 'bottom', color='#aaaaaa', fontsize=9, style='italic')
         ax.axhline(0, color='#888888', lw=.8)
         ax.axvline(0, color='#888888', lw=.8)
@@ -783,18 +783,19 @@ def plot_role_play(rp: dict, out: Path) -> Path:
     marks = dict(zip(pairs, 'o^sD'))
     for y, (n, v) in enumerate(rows):
         col = COLORS.get(n, COLORS['DeepSeek repeat'])
-        ax.barh(y, v['mind_mean'], color=col, alpha=.35, height=.6)
-        ax.plot([v['same_scene_again']] * 2, [y - .36, y + .36], color='black', lw=2.2, label='same scene asked again (noise level)' if y == 0 else None)
+        gap = v['mind_mean'] - v['same_scene_again']
+        ax.barh(y, v['same_scene_again'], color='#e6e6e6', height=.6, label='same scene asked again (noise)' if y == 0 else None)
+        ax.barh(y, gap, left=v['same_scene_again'], color=col, alpha=.75, height=.6, label='extra change from the character (role-play)' if y == 0 else None)
         for k in pairs:
             ax.plot(v['mind'][k], y, marks[k], ms=5, mfc='white', mec=col)
-        ax.text(.63, y, f"{v['mind_mean']:.2f}", va='center', ha='right', fontsize=10, color=col, weight='bold')
+        ax.text(.63, y, f"{gap:+.2f}", va='center', ha='right', fontsize=10, color=col, weight='bold')
     ax.set_yticks(range(len(rows)), [n for n, _ in rows])
     ax.set_xlim(0, .64)
-    ax.text(.63, len(rows) - .4, 'mean', ha='right', fontsize=8, color='#555555')
+    ax.text(.63, len(rows) - .4, 'role-play', ha='right', fontsize=8, color='#555555')
     ax.set_xlabel('change in stated choice when only the character\'s personality flips  (0 = none, 1 = complete)', fontsize=9)
     for k in pairs:
         ax.plot([], [], marks[k], mfc='white', mec='#555555', label=k)
-    ax.legend(fontsize=8, frameon=False, loc='upper left', bbox_to_anchor=(1.0, 1.0), title='coloured bar = mean of 4 test scenes', title_fontsize=8)
+    ax.legend(fontsize=8, frameon=False, loc='upper left', bbox_to_anchor=(1.0, 1.0), title='bar ends at the mean of 4 test scenes;\nmarkers = each scene', title_fontsize=8)
     for sp in ('top', 'right'):
         ax.spines[sp].set_visible(False)
     path = out / 'role_play.png'
@@ -814,15 +815,18 @@ def plot_goodness(lines: list[dict], basis: dict, maps: dict, fold: dict, out: P
         g = lambda q, V=V: np.array([q['option_scores'][x] for x in q['options']], float)[:, basis['direct']] * basis['fav'] @ V[:, :1]
         point, lo, hi, n, _ = nats_core(lines, src, g, maps, fold)
         order = np.argsort(point[:len(models), 0]) if order is None else order
+        y0 = -1  # DeepSeek against itself, below the models
+        ax.plot([lo[-1, 0], hi[-1, 0]], [y0, y0], color='#8a8a8a', lw=1.6)
+        ax.plot(point[-1, 0], y0, 'o', color='#8a8a8a')
         ax.axvline(0, color='#888888', lw=.8)
         for y, j in enumerate(order):
             name = short(models[j])
             ax.plot([lo[j, 0], hi[j, 0]], [y, y], color=COLORS[name], lw=1.6)
             logo(ax, point[j, 0], y, name, .14)
-        ax.set_yticks(range(len(order)), [short(models[j]) for j in order])
-        ax.set_ylim(-.7, len(order) - .3)
-        ax.set_title(f'{sname} ({n} questions; DeepSeek vs itself: {point[-1, 0]:+.2f})', loc='left', fontsize=10)
-        ax.set_xlabel('\u2190 less good  |  more good \u2192   than DeepSeek (nats; 0 = same as DeepSeek)', fontsize=9)
+        ax.set_yticks([-1] + list(range(len(order))), ['DeepSeek vs itself'] + [short(models[j]) for j in order])
+        ax.set_ylim(-1.7, len(order) - .3)
+        ax.set_title(f'{sname} ({n} questions)', loc='left', fontsize=10)
+        ax.set_xlabel('\u2190 less good  |  more good \u2192   (nats vs DeepSeek)', fontsize=9)
         for sp in ('top', 'right'):
             ax.spines[sp].set_visible(False)
     path = out / 'goodness.png'
@@ -911,25 +915,28 @@ def page_random(tables: Path, out: Path, title: str) -> Path:
               'on the same question (+0.1 nats is about 1.1 times DeepSeek\'s odds). <b>Calibrated</b> = each model\'s spread of percentages is first mapped onto DeepSeek\'s (Details: calibration), '
               'so an indecisive model is not read as preferring worse options.</p>',
               takeaways.read_text() if takeaways.exists() else '',
-              '<h2>1. Do the models choose as themselves, or play the character?</h2>', img(role_png),
+              '<h2>1. Check first: do they choose as themselves, or play the character?</h2>', img(role_png),
               '<p>Before reading any result, check what the models are doing. Pairs of test scenes differ only in the character\'s personality, for example a woman whose life dream is to climb Everest, or one terrified of heights, '
               'offered the last place on an Everest expedition. A model choosing as itself answers both the same way. '
               + f"Haiku takes the place {everest['anthropic/claude-haiku-5.5']['dream']:.0%} of the time for the climber and {everest['anthropic/claude-haiku-5.5']['afraid']:.0%} for the one afraid of heights; DeepSeek {everest['deepseek/deepseek-v4.1-flash']['dream']:.0%} and {everest['deepseek/deepseek-v4.1-flash']['afraid']:.0%}. "
-              + 'The coloured bar is how much the answer moves when only the personality flips; the grey bar is how much it moves when the same scene is simply asked again (noise). '
-              + 'The gap between them is role-play. Muse, Luna and DeepSeek are close to noise; Gemini, Qwen and Haiku clearly follow the character, so their results below include some role-play. '
+              + 'The grey part of each bar is how much the answer moves when the same scene is simply asked again (noise); the coloured part is the extra change when only the personality flips, which is role-play. '
+              + 'Gemini, Qwen and Haiku follow the character most (about +0.14); Muse, Luna and DeepSeek less (+0.04 to +0.07), so their results are closest to their own choices. '
+              + 'Only 4 test scenes, so these are rough. '
               + 'Some change is reasonable (a character already entered in a tournament has a commitment), so the gap somewhat overstates role-play. '
               f'Source: <code>{escape(", ".join(rp["runs"]))}</code>.</p>',
-              '<h2>2. Do they choose the good option?</h2>', img(goodness_png),
+              '<h2>2. Main result: how often each model picks the good option</h2>', img(goodness_png),
               '<p>The 66 virtue labels mostly move together, so the main difference between models is how often they pick the generally better option. '
               'Each logo is a model compared with DeepSeek on the same questions; the line is its 95% interval. +0.1 nats means about 10% higher odds of picking the better option than DeepSeek. '
               'An interval crossing 0 means no shown difference from DeepSeek, not proof of equality. "Good" here means the option the virtue labels score higher, not a moral verdict on the model. '
-              'Each title also gives DeepSeek against itself (its two answers compared). One game question is left out for every model because Haiku never gave valid percentages for it.</p>',
-              '<h2>3. Good or lawful?</h2>', img(dnd_png),
+              'The grey row is DeepSeek against itself (its two answers compared): differences of that size are noise. One game question is left out for every model because Haiku never gave valid percentages for it.</p>',
+              '<h2>3. The same answers on the D&D chart: models differ in how good, hardly in how lawful</h2>', img(dnd_png),
               '<p>The same answers scored on the D&D axes: up = picks the more good option, right = picks the more lawful option, compared with DeepSeek at the centre (0, 0). Bars are 95% intervals. '
-              'The corner names are directions relative to DeepSeek, not absolute alignments: a model below 0 picks less good options than DeepSeek, it is not "evil".</p>',
-              '<p><b>When the rule and the good deed differ.</b> The plot above uses all questions. On the questions where the most lawful option is not the most virtuous one, which way does each model lean, compared with DeepSeek? '
-              'These numbers come from a smaller set of questions, so they are larger and less certain than the plot.</p>' + rules_table,
-              '<h2>4. Beyond goodness: each model\'s style</h2>', img(spider_png),
+              'Corner names are directions relative to DeepSeek, not alignments: below 0 means picking less good options than DeepSeek, not being evil. '
+              'The good axis here is the D&D label from the source data, not the 66-virtue score of step 2, so the numbers differ slightly.</p>',
+              '<p><b>When the rule and the good deed differ.</b> On the questions where the most lawful option is not the most virtuous one, no model clearly picks the rule more than DeepSeek does. '
+              'Gemini (both settings) and Qwen (games) pick the less good option more often, which repeats step 2 on a smaller set of questions; their intervals only just exclude 0.</p>'
+              '<details><summary>Numbers</summary>' + rules_table + '</details>',
+              '<h2>4. Beyond goodness: only Luna has a clear, stable style</h2>', img(spider_png),
               '<p>What is left once overall goodness is removed. A spoke outside the dashed ring = the model favours that kind of virtue more than DeepSeek does, beyond what goodness alone predicts. '
               'Filled dot = 95% interval excludes 0. The table says whether a model\'s style is stable: the correlation of its 66-virtue pattern between two random halves of the questions, and between everyday and game questions '
               '(1 = same pattern; the DeepSeek repeat row shows what noise alone gives; the 66 virtues overlap, so treat values under about 0.5 as unclear).</p>' + cons_table,
@@ -964,6 +971,6 @@ if __name__ == '__main__':
     parser.add_argument('--scoring', type=Path, default=ROOT / 'outputs/20261026_probability_eval_scored/scoring')
     parser.add_argument('--out', type=Path, default=ROOT / '.local/choice_preview/probability_eval')
     parser.add_argument('--tables', type=Path, help='question_tables.jsonl of a random run; builds the random-set page instead')
-    parser.add_argument('--title', default='Which virtues does each model favour? 1,000 random questions')
+    parser.add_argument('--title', default='How do AI models choose in moral dilemmas? 1,000 random questions, six models')
     a = parser.parse_args()
     print(page_random(a.tables, a.out, a.title) if a.tables else page(a.scoring, a.out))
