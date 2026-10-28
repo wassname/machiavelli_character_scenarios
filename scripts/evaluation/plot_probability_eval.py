@@ -764,10 +764,10 @@ def plot_dnd_scatter(res: dict, keep: list, dims: list, models: list, out: Path)
         ax.axhline(0, color='#888888', lw=.8)
         ax.axvline(0, color='#888888', lw=.8)
         ax.set_title(f'{name} (lawful: {inf[k_order]} questions, good: {inf[k_good]})', loc='left', fontsize=10)
-        ax.set_xlabel('\u2190 chaotic | lawful \u2192  [nats vs DeepSeek]')
+        ax.set_xlabel('\u2190 more chaotic | more lawful \u2192  [nats vs DeepSeek]')
         for sp in ('top', 'right'):
             ax.spines[sp].set_visible(False)
-    axs[0].set_ylabel('\u2190 evil | good \u2192  [nats vs DeepSeek]')
+    axs[0].set_ylabel('\u2190 less good | more good \u2192  [nats vs DeepSeek]')
     path = out / 'dnd_scatter.png'
     fig.savefig(path, dpi=110)
     plt.close(fig)
