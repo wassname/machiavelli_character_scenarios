@@ -751,7 +751,6 @@ def plot_style_spider(lines: list[dict], basis: dict, groups: dict, maps: dict, 
         ax.tick_params(axis='y', labelsize=7)
         ax.set_title(name, pad=22)
     axs[1].legend(loc='upper left', bbox_to_anchor=(1.05, 1.05), frameon=False, fontsize=9)
-    fig.suptitle('Dashed ring = DeepSeek. Outside the ring = favours that kind of virtue more than DeepSeek, beyond overall goodness.\nRings: % higher or lower odds than DeepSeek. Filled dot = 95% interval excludes DeepSeek (grey: outside DeepSeek\'s own run-to-run range).', fontsize=10)
     path = out / 'style_spider.png'
     fig.savefig(path, dpi=110)
     plt.close(fig)
@@ -830,16 +829,16 @@ def plot_role_play(rp: dict, out: Path) -> Path:
         col = COLORS.get(n, COLORS['DeepSeek repeat'])
         base, gap = v['same_scene_again'], v['role_play']
         real = v['p_value'] < .05
-        ax.barh(y, base, color='#e6e6e6', height=.6, label='same scene asked again (noise)' if y == 0 else None)
+        ax.barh(y, base, color='#e6e6e6', height=.6, label='same scene again' if y == 0 else None)
         ax.barh(y, gap, left=base, color=col, alpha=.8 if real else .25, height=.6)
-        ax.plot([base + v['null_95']] * 2, [y - .38, y + .38], color='#222222', lw=1.6, label='largest extra change chance gives (95%)' if y == 0 else None)
+        ax.plot([base + v['null_95']] * 2, [y - .38, y + .38], color='#222222', lw=1.6, label='chance limit' if y == 0 else None)
         ax.text(.5, y, f"{gap:+.2f}" + ('' if real else '  (chance)'), va='center', ha='right', fontsize=10, color=col, weight='bold' if real else 'normal')
     ax.set_yticks(range(len(rows)), [n for n, _ in rows])
     ax.set_xlim(0, .51)
     ax.text(.5, len(rows) - .4, 'extra change', ha='right', fontsize=8, color='#555555')
-    ax.add_patch(matplotlib.patches.Rectangle((0, 0), 0, 0, color='#888888', label='extra change when only the personality flips'))
-    ax.set_xlabel('change in stated choice when only the character\'s personality flips  (0 = none, 1 = complete)', fontsize=9)
-    ax.legend(fontsize=8, frameon=False, loc='upper left', bbox_to_anchor=(1.0, 1.0), title='4 test scenes, 4 answers per version;\nfaded = within chance', title_fontsize=8)
+    ax.add_patch(matplotlib.patches.Rectangle((0, 0), 0, 0, color='#888888', label='personality flipped'))
+    ax.set_xlabel('change in stated choice', fontsize=9)
+    ax.legend(fontsize=8, frameon=False, loc='upper left', bbox_to_anchor=(1.0, 1.0), title=None)
     for sp in ('top', 'right'):
         ax.spines[sp].set_visible(False)
     path = out / 'role_play.png'
@@ -888,14 +887,14 @@ def plot_goodness_absolute(lines: list[dict], basis: dict, maps: dict, fold: dic
         ax.axvline(0, color='#888888', lw=.8)
         ax.set_yticks(range(len(order)), ['DeepSeek' if j == 0 else short(models[j]) for j in order])
         ax.set_title(f'{sname} ({len(den)} questions)', loc='left', fontsize=10)
-        ax.set_xlabel('\u2190 less good  |  more good \u2192   (nats vs an even split; 0 = no preference)', fontsize=9)
+        ax.set_xlabel('\u2190 less good | more good \u2192  (nats vs an even split)', fontsize=9)
         for sp in ('top', 'right'):
             ax.spines[sp].set_visible(False)
         stats[src] = {('DeepSeek' if j == 0 else short(m)): {'calibrated': round(float(cal[j]), 3), 'ci95': [round(float(lo[j]), 3), round(float(hi[j]), 3)], 'uncalibrated': round(float(unc[j]), 3)} for j, m in enumerate(models)}
     right = 1.08 * max(max(max(v['ci95'][1], v['uncalibrated']) for v in st.values()) for st in stats.values())
     for ax in axs:
         ax.set_xlim(-.1, right)
-    axs[0].plot([], [], 'o', mfc='white', mec='#555555', label="model's own percentages, before rescaling to DeepSeek's spread")
+    axs[0].plot([], [], 'o', mfc='white', mec='#555555', label='before calibration')
     fig.legend(fontsize=8, frameon=False, loc='outside lower center')
     path = out / 'goodness_absolute.png'
     fig.savefig(path, dpi=110)
@@ -1049,7 +1048,7 @@ def page_random(tables: Path, out: Path, title: str) -> Path:
               '<details><summary>Numbers</summary>' + rules_table + '</details>',
               '<h2>4. Beyond goodness: only Luna has a clear style that holds in both settings</h2>', img(spider_png),
               '<p>What is left once overall goodness is removed. A spoke outside the dashed ring = the model favours that kind of virtue more than DeepSeek does, beyond what goodness alone predicts. '
-              'Filled dot = 95% interval excludes 0 (for the grey DeepSeek repeat: outside its own run-to-run range). The table says whether a model\'s style is stable: the correlation of its 66-virtue pattern between two random halves of the questions, and between everyday and game questions '
+              'Rings show % higher or lower odds than DeepSeek. Filled dot = 95% interval excludes 0 (for the grey DeepSeek repeat: outside its own run-to-run range). The table says whether a model\'s style is stable: the correlation of its 66-virtue pattern between two random halves of the questions, and between everyday and game questions '
               '(1 = same pattern; the DeepSeek repeat row shows what noise alone gives; the 66 virtues overlap, so treat values under about 0.5 as unclear).</p>' + cons_table,
               '<details><summary>Style numbers</summary>' + spider_table + '</details>',
               '<h2>Details</h2>',
