@@ -5,6 +5,7 @@ from collections import defaultdict
 import hashlib
 from html import escape
 import json
+import itertools
 import re
 from pathlib import Path
 
@@ -901,8 +902,9 @@ def page_random(tables: Path, out: Path, title: str) -> Path:
     packet = next(json.loads(x) for x in (tables.parent / 'packets.jsonl').open() if '"machiavelli"' in x)
     prompt_html = ''.join(f"<h4>{escape(msg['role'])}</h4><pre>{escape(msg['content'])}</pre>" for msg in packet['request']['messages'])
     second = {}  # mean stated % for the second-shown option on two-option questions, per model
-    for stage in ('smoke', 'rest'):
-        for r in map(json.loads, (tables.parent / stage / 'choices.jsonl').open()):
+    runs = [tables.parent] + [ROOT / x for x in lines[0]['_meta']['extra_model_runs']]
+    for run, stage in itertools.product(runs, ('smoke', 'rest')):
+        for r in map(json.loads, (run / stage / 'choices.jsonl').open()):
             if r['status'] == 'ok' and len(r['probabilities']) == 2:
                 second.setdefault(short(r['model']) if 'deepseek' not in r['model'] else 'DeepSeek', []).append(r['probabilities']['1'])
     position_note = ', '.join(f'{m} {np.mean(v):.1f}%' for m, v in sorted(second.items()))
