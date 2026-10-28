@@ -1,0 +1,5 @@
+body { font: 16px/1.5 system-ui, sans-serif; color: #222; margin: 0; background: #fdfcf7; }
+main { max-width: 1300px; margin: 24px auto; padding: 0 20px; }
+figure { margin: 0 0 24px; }
+figcaption { font-size: 14px; color: #444; max-width: 860px; }
+.footnote { font-size: 12px; color: #777; margin-top: 6px; }

@@ -109,3 +109,16 @@ prepare-dailydilemmas out:
 # PI/Sol: Check exact DD source actions, license and hidden-field blinding without inference.
 dailydilemmas-check inputs:
     uv run --locked python scripts/checks/check_dailydilemmas.py "{{inputs}}"
+
+# PI/OpenAI: GitHub Pages site (React): copy the D&D data, build, and screenshot the chart for the README.
+site-build run="outputs/20261027_random1000_v12":
+    cp "{{run}}/calibration_heldout/dnd_web.json" site/src/data/dnd_web.json
+    cd site && pnpm install --frozen-lockfile && pnpm exec tsc --noEmit && pnpm exec vite build
+
+site-shot:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    (cd site && exec node_modules/.bin/vite preview --host 127.0.0.1 --port 8083 --strictPort > /dev/null) & server=$!
+    trap 'kill $server' EXIT
+    sleep 3
+    google-chrome --headless=new --no-sandbox --disable-gpu --hide-scrollbars --window-size=1300,1000 --virtual-time-budget=4000 --screenshot=docs/figures/dnd_alignment.png "http://127.0.0.1:8083/?shot"
