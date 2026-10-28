@@ -30,8 +30,29 @@ const INK = '#2f2e2a'
 const f2 = (v: number) => `${v >= 0 ? '+' : '−'}${Math.abs(v).toFixed(2)}`
 const REPO = 'github.com/wassname/virtue-choices'
 
+// Axis arrows after the common D&D alignment chart: a two-headed gradient arrow per axis with a bold title.
+const LAW = '#7d8a99', CHAOS = '#e0569b', GOOD = '#3a9e3a', EVIL = '#d0392b'
+function AxisArrows({ id, x, y, size, law, good }: { id: string; x: number; y: number; size: number; law: string; good: string }) {
+  const ax = y + size + 26, gx = x - 26  // horizontal arrow under the box, vertical arrow left of it
+  const head = (px: number, py: number, dx: number, dy: number, col: string) => <polyline points={`${px - dy * 9 - dx * 9},${py - dx * 9 - dy * 9} ${px},${py} ${px + dy * 9 - dx * 9},${py + dx * 9 - dy * 9}`} fill="none" stroke={col} strokeWidth={4} strokeLinecap="round" strokeLinejoin="round" />
+  return (
+    <g>
+      <defs>
+        <linearGradient id={`law-${id}`} x1="0" y1="0" x2="1" y2="0"><stop offset="0" stopColor={LAW} /><stop offset="1" stopColor={CHAOS} /></linearGradient>
+        <linearGradient id={`good-${id}`} x1="0" y1="0" x2="0" y2="1"><stop offset="0" stopColor={GOOD} /><stop offset="1" stopColor={EVIL} /></linearGradient>
+      </defs>
+      <rect x={x + 4} y={ax - 2} width={size - 8} height={4} fill={`url(#law-${id})`} />
+      {head(x + 3, ax, -1, 0, LAW)}{head(x + size - 3, ax, 1, 0, CHAOS)}
+      <text x={x + size / 2} y={ax + 26} fontSize={20} fontWeight={700} fill={INK} textAnchor="middle">{law}</text>
+      <rect x={gx - 2} y={y + 4} width={4} height={size - 8} fill={`url(#good-${id})`} />
+      {head(gx, y + 3, 0, -1, GOOD)}{head(gx, y + size - 3, 0, 1, EVIL)}
+      <text x={gx - 14} y={y + size / 2} fontSize={20} fontWeight={700} fill={INK} textAnchor="middle" transform={`rotate(-90 ${gx - 14} ${y + size / 2})`}>{good}</text>
+    </g>
+  )
+}
+
 // ---------- overview ----------
-const M = 760, MX = 50, MY = 20, EXT = 3
+const M = 760, MX = 80, MY = 20, EXT = 3
 const S = M / (2 * EXT)  // px per nat
 const sx = (lawful: number) => MX + M / 2 - lawful * S  // lawful on the left
 const sy = (good: number) => MY + M / 2 - good * S
@@ -45,7 +66,7 @@ export function Overview({ data }: { data: DndData }) {
   const day = data.sources.daily_dilemmas, game = data.sources.machiavelli
   const region = (x: number, y: number, t: string, size = 17) => <text x={sx(x)} y={sy(y)} fontSize={size} fill="#4f4d45" textAnchor="middle" dominantBaseline="middle" letterSpacing={1}>{t}</text>
   return (
-    <svg viewBox={`0 0 ${MX + M + 50} ${MY + M + 50}`} width="100%" role="img" aria-label="Alignment graph: all six models sit in lawful good">
+    <svg viewBox={`0 0 ${MX + M + 30} ${MY + M + 80}`} width="100%" role="img" aria-label="Alignment graph: all six models sit in lawful good">
       <defs>
         <linearGradient id="goodEvil" x1="0" y1="0" x2="0" y2="1">
           <stop offset="0" stopColor="#e3ecdc" /><stop offset=".5" stopColor="#f6f3ea" /><stop offset="1" stopColor="#f1e1dc" />
@@ -72,8 +93,7 @@ export function Overview({ data }: { data: DndData }) {
           </g>
         )
       })}
-      <text x={MX + M / 2} y={MY + M + 34} fontSize={19} fill={INK} textAnchor="middle">← lawful | chaotic →</text>
-      <text x={MX - 20} y={MY + M / 2} fontSize={19} fill={INK} textAnchor="middle" transform={`rotate(-90 ${MX - 20} ${MY + M / 2})`}>← evil | good →</text>
+      <AxisArrows id="overview" x={MX} y={MY} size={M} law="Law versus Chaos" good="Good versus Evil" />
       <text x={MX + M / 2} y={MY + M - 10} fontSize={13} fill="#a19d8f" fontStyle="italic" textAnchor="middle">{REPO}</text>
     </svg>
   )
@@ -101,7 +121,7 @@ function placeLabels(pts: { name: string; x: number; y: number }[]) {
 const Z = 720, R = .2, ZK = (Z / 2 - 24) / R  // zoom square, ±R nats, px per nat
 export function Zoom({ title, src }: { title: string; src: SourceData }) {
   const [hover, setHover] = useState<string | null>(null)
-  const x = 50, y = 50
+  const x = 80, y = 50
   const ix = (lawful: number) => x + Z / 2 - lawful * ZK
   const iy = (good: number) => y + Z / 2 - good * ZK
   const rows: [string, Pair][] = [['DeepSeek', [0, 0]], ...Object.entries(src.models).map(([n, r]) => [n, r.offset] as [string, Pair])]
@@ -111,10 +131,10 @@ export function Zoom({ title, src }: { title: string; src: SourceData }) {
   const key = src.models[src.key_model].ci95_refit
   const kw = ((key[0][1] - key[0][0]) + (key[1][1] - key[1][0])) / 2 * ZK
   const parts = (['questions', 'calibration', 'answers'] as const).map(n => [n, (src.variance_shares[n][0] + src.variance_shares[n][1]) / 2] as const)
-  const kx = x, ky = y + Z + 64, cy = ky + 22  // small key under the zoom
+  const kx = x, ky = y + Z + 92, cy = ky + 22  // small key under the zoom
   let bx = kx
   return (
-    <svg viewBox={`0 0 ${x + Z + 20} ${y + Z + 140}`} width="100%" role="img" aria-label={`${title}: each model compared with DeepSeek`}>
+    <svg viewBox={`0 0 ${x + Z + 20} ${y + Z + 170}`} width="100%" role="img" aria-label={`${title}: each model compared with DeepSeek`}>
       <text x={x} y={y - 16} fontSize={24} fill={INK}>{title}, each model vs DeepSeek</text>
       <defs>
         <linearGradient id={`zoomGE-${title.replace(/\W/g, "")}`} x1="0" y1="0" x2="0" y2="1">
@@ -127,8 +147,7 @@ export function Zoom({ title, src }: { title: string; src: SourceData }) {
         <text key={w} x={tx} y={ty} fontSize={19} fontStyle="italic" fontFamily="Georgia, serif" fill="#55534a" textAnchor={a}>{w}</text>)}
       <line x1={x} x2={x + Z} y1={iy(0)} y2={iy(0)} stroke="#bdbab0" />
       <line y1={y} y2={y + Z} x1={ix(0)} x2={ix(0)} stroke="#bdbab0" />
-      <text x={x + Z / 2} y={y + Z + 30} fontSize={19} fill={INK} textAnchor="middle">← more lawful | more chaotic →</text>
-      <text x={x - 16} y={y + Z / 2} fontSize={19} fill={INK} textAnchor="middle" transform={`rotate(-90 ${x - 16} ${y + Z / 2})`}>← less good | more good →</text>
+      <AxisArrows id={title.replace(/\W/g, '')} x={x} y={y} size={Z} law="More lawful versus more chaotic than DeepSeek" good="More good versus more evil" />
       {shown && <g stroke={COLORS[hover!]} strokeWidth={2.5} opacity={.6}>
         <line x1={ix(shown.ci95_refit[0][0])} x2={ix(shown.ci95_refit[0][1])} y1={iy(shown.offset[1])} y2={iy(shown.offset[1])} />
         <line x1={ix(shown.offset[0])} x2={ix(shown.offset[0])} y1={iy(shown.ci95_refit[1][0])} y2={iy(shown.ci95_refit[1][1])} /></g>}
@@ -144,7 +163,7 @@ export function Zoom({ title, src }: { title: string; src: SourceData }) {
           </g>
         )
       })}
-      <text x={x + Z} y={y + Z + 30} fontSize={14} fill={INK} textAnchor="end">±{R} nats</text>
+      <text x={x + Z} y={y + Z + 52} fontSize={14} fill={INK} textAnchor="end">±{R} nats</text>
       <text x={kx} y={ky} fontSize={15} fill={INK}>uncertainty (95%, typical model)</text>
       <g stroke={INK} strokeWidth={1.6}><line x1={kx} x2={kx + kw} y1={cy} y2={cy} /><line x1={kx} x2={kx} y1={cy - 7} y2={cy + 7} /><line x1={kx + kw} x2={kx + kw} y1={cy - 7} y2={cy + 7} /></g>
       {parts.map(([n, f]) => { const len = f * kw, g = <g key={n}>
